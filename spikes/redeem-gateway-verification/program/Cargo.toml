@@ -1,0 +1,26 @@
+[package]
+name = "redeem-gateway-spike"
+version = "0.1.0"
+description = "THROWAWAY spike, not kept: live-tests the burn-gateway co-sign pattern for spec-001's Redeem/burn flow. See plan-001.md Phase 0.5."
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "redeem_gateway_spike"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+[dependencies]
+anchor-lang = "1.1.2"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
