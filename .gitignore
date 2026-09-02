@@ -1,2 +1,20 @@
 .DS_Store
 node_modules/
+
+# Anchor / Rust
+# target/ is fully ignored (git can't selectively un-ignore files inside an
+# ignored directory) — the program's deploy keypair is instead tracked at
+# programs/compliance-hook/program-keypair.json; copy it into
+# target/deploy/compliance_hook-keypair.json before the first `anchor build`
+# on a fresh clone so the program ID stays consistent with declare_id!.
+.anchor/
+target/
+**/*.rs.bk
+test-ledger/
+.yarn/
+
+# Env
+.env
+
+# Frontend build
+frontend/dist/

@@ -1,0 +1,58 @@
+.app-shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #1a1a2e;
+}
+
+.app-header h1 {
+  font-size: 1.5rem;
+  margin-bottom: 0.15rem;
+}
+
+.app-subtitle {
+  color: #6b7280;
+  margin-top: 0;
+  font-size: 0.9rem;
+}
+
+.tab-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1.5rem 0;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 1rem;
+}
+
+.tab-button {
+  padding: 0.5rem 1rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f9fafb;
+  color: #1a1a2e;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.tab-button:hover {
+  background: #f3f4f6;
+}
+
+.tab-button.active {
+  background: #1a1a2e;
+  color: #fff;
+  border-color: #1a1a2e;
+}
+
+.tab-content {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1.5rem;
+  min-height: 200px;
+}
+
+.tab-content h2 {
+  margin-top: 0;
+}
