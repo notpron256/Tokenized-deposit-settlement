@@ -169,9 +169,11 @@ export default function Transfer() {
         Every transfer runs through the Transfer Hook's four on-chain checks (spec-001.md Move/transfer flow):
         velocity limit, Travel Rule memo, sanctions re-screen, and a non-blocking large-transaction flag for amounts
         of $10,000 or more. The memo's originator "50K" and beneficiary "59" fields are filled in automatically from
-        the selected sender/recipient — but carry a reference ID pointing at each client's onboarding record, not
-        their real name/registration ID/address in cleartext. That real data stays in Postgres, resolvable only
-        through this application's own compliance views, never posted on-chain (spec-001.md, Areas of concern).
+        the selected sender/recipient — each carrying a reference ID plus a SHA-256 hash of that client's identity
+        data (computed fresh at transfer time), not their real name/registration ID/address in cleartext. The
+        reference proves linkage to a real onboarding record; the hash proves that record's content is unaltered
+        since — real data stays in Postgres, resolvable only through this application's own compliance views, never
+        posted on-chain (spec-001.md, Move/transfer flow and Areas of concern).
       </p>
 
       {error && (

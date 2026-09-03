@@ -14,6 +14,7 @@
  * each client's ledger row in sync with what Phase 9's reconciliation will
  * later check it against.
  */
+import crypto from "node:crypto";
 import { Connection, Keypair, PublicKey, SendTransactionError } from "@solana/web3.js";
 import { TOKEN_2022_PROGRAM_ID, createTransferCheckedWithTransferHookInstruction, getAccount } from "@solana/spl-token";
 import { Transaction, TransactionInstruction, sendAndConfirmTransaction } from "@solana/web3.js";
@@ -45,11 +46,13 @@ interface ClientRow {
   ata_address: string;
   owner_address: string;
   status: string;
+  registration_id: string;
+  legal_address: string;
 }
 
 async function loadClient(clientId: string): Promise<ClientRow> {
   const { rows } = await pool.query(
-    `SELECT id, name, ata_address, owner_address, status FROM clients WHERE id = $1`,
+    `SELECT id, name, ata_address, owner_address, status, registration_id, legal_address FROM clients WHERE id = $1`,
     [clientId],
   );
   if (rows.length === 0) {
@@ -65,28 +68,75 @@ function memoInstruction(text: string): TransactionInstruction {
   return new TransactionInstruction({ programId: MEMO_PROGRAM_V3, keys: [], data: Buffer.from(text, "utf-8") });
 }
 
-/** Builds a :50K:/:59: party field's content: a reference ID pointing at
- * the client's own onboarding record (their Postgres primary key) — never
- * their real legal name, registration ID, or address in cleartext on a
- * public, immutable ledger. That real identifying data still lives in
- * Postgres exactly as captured at onboarding, visible only through the
- * application's own compliance-facing views (e.g. the Onboarding page's
- * client table) — the memo only proves a specific, resolvable identity
- * record exists behind the transfer, not what it contains.
+/**
+ * Canonical, unambiguous byte serialization of a client's Travel Rule
+ * identity fields — name, registration ID, legal address, in this fixed
+ * order — for hashing (identityHash below). Each field is length-prefixed
+ * (its UTF-8 byte length, decimal, then ":", then the field's own UTF-8
+ * bytes) rather than joined with a plain separator character. A plain
+ * separator would make the encoding ambiguous whenever a field's own
+ * content happens to contain it: name="A|B", registrationId="C" would
+ * hash identically to name="A", registrationId="B|C" under naive
+ * "|"-joining. Length-prefixing removes that ambiguity regardless of
+ * field content — which matters here specifically because this exact byte
+ * sequence is what gets committed to on-chain; anyone re-deriving it
+ * independently from a Postgres row must land on byte-for-byte the same
+ * input to get the same hash back out.
+ */
+function canonicalIdentityBytes(client: ClientRow): Buffer {
+  const fields = [client.name, client.registration_id, client.legal_address];
+  return Buffer.concat(
+    fields.map((field) => {
+      const bytes = Buffer.from(field, "utf-8");
+      return Buffer.concat([Buffer.from(`${bytes.length}:`, "utf-8"), bytes]);
+    }),
+  );
+}
+
+/**
+ * SHA-256 of canonicalIdentityBytes, as a lowercase hex digest — a
+ * cryptographic commitment to this client's identity data *as it exists
+ * right now* in Postgres, computed fresh at transfer time (never cached or
+ * stored), so it reflects the record at the moment of transfer. Posted
+ * on-chain alongside the reference ID (partyField) so anyone with database
+ * access can later recompute this same hash from the current record and
+ * compare it against what's immutably on-chain: a match proves the record
+ * is unchanged since this transfer; a mismatch proves it was altered
+ * afterward. This is a distinct guarantee from the reference ID alone —
+ * the ID only proves *linkage* to some record, not that the record's
+ * content is what it was at transfer time; the hash is what makes that
+ * second claim checkable.
+ */
+function identityHash(client: ClientRow): string {
+  return crypto.createHash("sha256").update(canonicalIdentityBytes(client)).digest("hex");
+}
+
+/** Builds a :50K:/:59: party field's content: `<clientId>:<identityHash>`.
+ * `clientId` is a reference pointing at the client's own onboarding record
+ * (their Postgres primary key) — never their real legal name, registration
+ * ID, or address in cleartext on a public, immutable ledger. That real
+ * identifying data still lives in Postgres exactly as captured at
+ * onboarding, visible only through the application's own compliance-facing
+ * views (e.g. the Onboarding page's client table). `identityHash` commits
+ * to that record's content at this exact moment, so the two together prove
+ * both linkage (this transfer really does point at a specific captured
+ * record) and integrity (that record hasn't silently changed since).
  *
- * This is the industry-standard pattern for crypto Travel Rule compliance
- * (TRISA, Notabene, the Travel Rule Protocol all work this way): identifying
- * data is exchanged off-chain between institutions, never posted on-chain.
- * It only works here because every client shares one database under one
- * institution — see spec-001.md's Areas of concern for why this doesn't
- * generalize to a genuine cross-institution transfer without a real
- * inter-institutional exchange mechanism.
+ * This reference-plus-hash design is the industry-standard pattern for
+ * crypto Travel Rule compliance (TRISA, Notabene, the Travel Rule Protocol
+ * all work this way): identifying data is exchanged off-chain between
+ * institutions, never posted on-chain. It only works here because every
+ * client shares one database under one institution — see spec-001.md's
+ * Areas of concern for why this doesn't generalize to a genuine
+ * cross-institution transfer without a real inter-institutional exchange
+ * mechanism.
  *
- * A client's id is a Postgres-generated UUID — never user input — so unlike
- * the free-text reference/remittance fields, there's no possibility of it
- * containing "|" (the memo's own top-level field delimiter). */
+ * A client's id is a Postgres-generated UUID and identityHash's output is
+ * always 64 lowercase hex characters — neither is user input, so unlike
+ * the free-text reference/remittance fields, there's no possibility of
+ * either containing "|" (the memo's own top-level field delimiter). */
 function partyField(client: ClientRow): string {
-  return client.id;
+  return `${client.id}:${identityHash(client)}`;
 }
 
 /** Maps a rejected transfer's on-chain program logs to a friendly reason.
