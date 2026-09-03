@@ -16,5 +16,8 @@ test-ledger/
 # Env
 .env
 
+# Bank authority keypairs (plan-001.md decision #4: local, plaintext, gitignored)
+backend/keys/
+
 # Frontend build
 frontend/dist/

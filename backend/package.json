@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "setup:mint": "tsx scripts/create-mint.ts"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.15",
