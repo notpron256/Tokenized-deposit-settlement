@@ -16,7 +16,7 @@ const RISK_LABELS = ["low", "medium", "high"] as const;
 const KYC_REFERENCE_PATTERN = /^[A-Z]+-\d{4}-\d{3,6}$/;
 
 onboardingRouter.post("/clients", async (req, res) => {
-  const { name, riskRating, kycReference } = req.body ?? {};
+  const { name, riskRating, kycReference, registrationId, legalAddress } = req.body ?? {};
 
   if (typeof name !== "string" || name.trim().length === 0) {
     return res.status(400).json({ error: "name is required" });
@@ -32,6 +32,16 @@ onboardingRouter.post("/clients", async (req, res) => {
       error: "kycReference must look like PREFIX-YYYY-NNNN, e.g. CASE-2026-0417",
     });
   }
+  // Real identifying data, resolved by reference at transfer time into the
+  // Travel Rule memo's :50K:/:59: fields (spec-001.md Move/transfer flow) —
+  // never posted on-chain in cleartext itself. Not verified against any
+  // real registry, same honesty posture as kycReference above.
+  if (typeof registrationId !== "string" || registrationId.trim().length === 0) {
+    return res.status(400).json({ error: "registrationId is required" });
+  }
+  if (typeof legalAddress !== "string" || legalAddress.trim().length === 0) {
+    return res.status(400).json({ error: "legalAddress is required" });
+  }
 
   try {
     const connection = getConnection();
@@ -45,15 +55,17 @@ onboardingRouter.post("/clients", async (req, res) => {
     try {
       await client.query("BEGIN");
       const { rows } = await client.query(
-        `INSERT INTO clients (name, risk_rating, ata_address, owner_address, kyc_reference)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, name, risk_rating, ata_address, owner_address, status, kyc_reference, created_at`,
+        `INSERT INTO clients (name, risk_rating, ata_address, owner_address, kyc_reference, registration_id, legal_address)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, name, risk_rating, ata_address, owner_address, status, kyc_reference, registration_id, legal_address, created_at`,
         [
           name.trim(),
           riskRating,
           result.ataAddress.toBase58(),
           result.client.publicKey.toBase58(),
           kycReference.trim(),
+          registrationId.trim(),
+          legalAddress.trim(),
         ],
       );
       const row = rows[0];
@@ -76,6 +88,8 @@ onboardingRouter.post("/clients", async (req, res) => {
         ownerAddress: row.owner_address,
         status: row.status,
         kycReference: row.kyc_reference,
+        registrationId: row.registration_id,
+        legalAddress: row.legal_address,
         velocityAccount: result.velocityAccount.toBase58(),
         signature: result.signature,
       });
@@ -93,7 +107,8 @@ onboardingRouter.post("/clients", async (req, res) => {
 
 onboardingRouter.get("/clients", async (_req, res) => {
   const { rows } = await pool.query(
-    `SELECT c.id, c.name, c.risk_rating, c.ata_address, c.owner_address, c.status, c.kyc_reference, c.created_at,
+    `SELECT c.id, c.name, c.risk_rating, c.ata_address, c.owner_address, c.status, c.kyc_reference,
+            c.registration_id, c.legal_address, c.created_at,
             lb.cash_balance_cents, lb.tokenized_cents
      FROM clients c
      LEFT JOIN ledger_balances lb ON lb.client_id = c.id
@@ -109,6 +124,8 @@ onboardingRouter.get("/clients", async (_req, res) => {
       ownerAddress: row.owner_address,
       status: row.status,
       kycReference: row.kyc_reference,
+      registrationId: row.registration_id,
+      legalAddress: row.legal_address,
       cashBalanceCents: Number(row.cash_balance_cents ?? 0),
       tokenizedCents: Number(row.tokenized_cents ?? 0),
       createdAt: row.created_at,

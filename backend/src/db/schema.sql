@@ -24,6 +24,25 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS kyc_reference TEXT;
 UPDATE clients SET kyc_reference = 'UNKNOWN (onboarded before KYC reference field existed)' WHERE kyc_reference IS NULL;
 ALTER TABLE clients ALTER COLUMN kyc_reference SET NOT NULL;
 
+-- Legal address and entity/registration ID: real identifying data captured
+-- at onboarding for Travel Rule purposes (spec-001.md Move/transfer flow).
+-- Never posted on-chain directly — the memo's :50K:/:59: fields carry a
+-- reference ID (the client's own id, see backend/src/flows/transferFlow.ts)
+-- that resolves to this real data only through the application's own
+-- compliance views, industry-standard practice for crypto Travel Rule
+-- compliance (TRISA, Notabene, the Travel Rule Protocol). Same backfill
+-- pattern as kyc_reference above — added after clients already existed.
+-- Placeholder wording is deliberately self-documenting (never a bare blank
+-- or "N/A"), so it reads as an honest historical record in the app's own
+-- compliance views, not a data gap that looks like a bug.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS registration_id TEXT;
+UPDATE clients SET registration_id = 'REGISTRATION ID NOT COLLECTED — onboarded before this field existed' WHERE registration_id IS NULL;
+ALTER TABLE clients ALTER COLUMN registration_id SET NOT NULL;
+
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS legal_address TEXT;
+UPDATE clients SET legal_address = 'ADDRESS NOT COLLECTED — onboarded before this field existed' WHERE legal_address IS NULL;
+ALTER TABLE clients ALTER COLUMN legal_address SET NOT NULL;
+
 -- Client keypairs are backend-custodied (spec-001.md Areas of concern: a
 -- deliberate, named scope decision, not an oversight) and stored separately
 -- from the client's public profile so a query against `clients` alone never

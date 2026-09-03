@@ -26,10 +26,13 @@
  * mint, reuses it instead of creating a new one — Phase 3+ needs a single,
  * stable mint address to build against, not a fresh one every run.
  */
+import crypto from "node:crypto";
 import {
   Keypair,
+  PublicKey,
   SystemProgram,
   Transaction,
+  TransactionInstruction,
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import {
@@ -55,6 +58,51 @@ import {
   HOOK_PROGRAM_ID,
   DECIMALS,
 } from "../src/solana/authorities.js";
+
+function anchorDiscriminator(instructionName: string): Buffer {
+  return crypto.createHash("sha256").update(`global:${instructionName}`).digest().subarray(0, 8);
+}
+
+/**
+ * Fixed after Phase 5 discovered the gap: pointing a mint at a Transfer
+ * Hook program (createInitializeTransferHookInstruction, above) only sets
+ * *which* program to invoke — it does not create that program's own
+ * extra-account-meta-list PDA (a separate account under the hook program
+ * itself, holding the extra accounts Execute needs resolved: velocity
+ * account, Instructions sysvar, sanctions registry). Without it, Token-2022
+ * can't even locate our program's extra accounts and every transfer fails
+ * with "An account required by the instruction is missing" — invisible to
+ * `spl-token display`, this script's original done-test, since that only
+ * inspects the mint's own extension config, not the hook program's side.
+ */
+async function ensureExtraAccountMetaList(
+  connection: import("@solana/web3.js").Connection,
+  payer: Keypair,
+  mintPubkey: PublicKey,
+): Promise<void> {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("extra-account-metas"), mintPubkey.toBuffer()],
+    HOOK_PROGRAM_ID,
+  );
+  const existing = await connection.getAccountInfo(pda);
+  if (existing) {
+    console.log(`Extra-account-meta-list already initialized: ${pda.toBase58()}`);
+    return;
+  }
+
+  const ix = new TransactionInstruction({
+    programId: HOOK_PROGRAM_ID,
+    keys: [
+      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: mintPubkey, isSigner: false, isWritable: false },
+      { pubkey: pda, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: anchorDiscriminator("initialize_extra_account_meta_list"),
+  });
+  const sig = await sendAndConfirmTransaction(connection, new Transaction().add(ix), [payer]);
+  console.log(`Extra-account-meta-list initialized: ${pda.toBase58()} (tx ${sig})`);
+}
 
 async function main() {
   const connection = getConnection();
@@ -123,6 +171,9 @@ async function main() {
     console.log(`Saved to backend/keys/mint-address.json`);
     mintPubkey = mint.publicKey;
   }
+
+  console.log();
+  await ensureExtraAccountMetaList(connection, payer, mintPubkey);
 
   // --- Read back every extension from the chain and confirm explicitly —
   // not assumed present because it was requested in the instructions above.

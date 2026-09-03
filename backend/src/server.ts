@@ -12,6 +12,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 // import would run before dotenv.config() above, capturing `undefined`.
 const { onboardingRouter } = await import("./routes/onboarding.js");
 const { depositFeedRouter } = await import("./routes/depositFeed.js");
+const { transferRouter } = await import("./routes/transfer.js");
 
 const app = express();
 app.use(cors());
@@ -23,6 +24,7 @@ app.get("/health", (_req, res) => {
 
 app.use(onboardingRouter);
 app.use(depositFeedRouter);
+app.use(transferRouter);
 
 const port = Number(process.env.PORT ?? 4000);
 app.listen(port, () => {
