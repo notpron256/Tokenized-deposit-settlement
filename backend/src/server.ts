@@ -11,6 +11,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 // which reads process.env.DATABASE_URL at module-load time. A hoisted static
 // import would run before dotenv.config() above, capturing `undefined`.
 const { onboardingRouter } = await import("./routes/onboarding.js");
+const { depositFeedRouter } = await import("./routes/depositFeed.js");
 
 const app = express();
 app.use(cors());
@@ -21,6 +22,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use(onboardingRouter);
+app.use(depositFeedRouter);
 
 const port = Number(process.env.PORT ?? 4000);
 app.listen(port, () => {

@@ -65,10 +65,10 @@ Files: `backend/src/db/schema.sql` (`clients`, `ledger_balances`, `deposit_event
 
 **Done test:** click "Onboard Client" for a new client, UI shows status flip to "Active" with the chosen risk tier; `spl-token account-info <ATA> --program-2022` in the terminal confirms it's no longer frozen.
 
-### Phase 4 — Fund/mint flow
+### Phase 4 — Fund/mint flow ✅
 Files: `backend/src/routes/depositFeed.ts`, `backend/src/flows/mintFlow.ts`, frontend Fund page ("Simulate Deposit" button: pick client + amount).
 
-**Done test:** click "Simulate Deposit ($X)" for an onboarded client — UI shows ledger cash balance and on-chain token balance both increase and match. Then try it against a *not-yet-onboarded* client — UI shows a clean rejection, not a stuck/frozen mint attempt.
+**Done test:** click "Simulate Deposit ($X)" for an onboarded client — UI shows ledger cash balance and on-chain token balance both increase and match. Then try it against a *not-yet-onboarded* client — UI shows a clean rejection, not a stuck/frozen mint attempt. **Verified**: deposited $2,500.50 for Sunrise Capital through the browser UI — ledger cash balance, ledger tokenized amount, and the app's own on-chain read-back all showed $2,500.50, then independently cross-checked with `spl-token account-info --address <ATA>` on the real validator, which also reported `2500.5`. Negative case (not-yet-onboarded/nonexistent client) tested directly via the API — since the UI's client picker only lists already-onboarded clients, there's no way to trigger this path by clicking through the form, so it was exercised with `curl` against a nonexistent client ID: clean `404` with no `deposit_events` row written (confirmed by checking the table), i.e. no stuck pending_chain row and no attempted mint.
 
 ### Phase 5 — Transfer flow
 Files: `backend/src/flows/transferFlow.ts`, frontend Transfer page (sender, recipient, amount, originator/beneficiary memo fields).

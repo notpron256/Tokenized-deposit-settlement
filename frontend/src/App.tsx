@@ -1,6 +1,7 @@
 import { useState } from "react";
 import "./App.css";
 import Onboarding from "./pages/Onboarding";
+import Fund from "./pages/Fund";
 
 const TABS = [
   "Onboarding",
@@ -47,6 +48,8 @@ function App() {
       <main className="tab-content">
         {activeTab === "Onboarding" ? (
           <Onboarding />
+        ) : activeTab === "Fund" ? (
+          <Fund />
         ) : (
           <>
             <h2>{activeTab}</h2>

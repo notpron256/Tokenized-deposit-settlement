@@ -19,6 +19,14 @@ export interface OnboardResponse extends Client {
   signature: string;
 }
 
+export interface DepositResponse {
+  depositEventId: string;
+  signature: string;
+  cashBalanceCents: number;
+  tokenizedCents: number;
+  onChainBalanceCents: number;
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -41,6 +49,15 @@ export async function onboardClient(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, riskRating, kycReference }),
+  });
+  return handleResponse(res);
+}
+
+export async function simulateDeposit(clientId: string, amountCents: number): Promise<DepositResponse> {
+  const res = await fetch(`${API_BASE_URL}/deposits`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientId, amountCents }),
   });
   return handleResponse(res);
 }
