@@ -1,5 +1,6 @@
 pub mod constants;
 pub mod error;
+pub mod events;
 pub mod instructions;
 pub mod state;
 
@@ -8,6 +9,7 @@ use spl_transfer_hook_interface::instruction::TransferHookInstruction;
 
 pub use constants::*;
 pub use error::*;
+pub use events::*;
 pub use instructions::*;
 pub use state::*;
 
@@ -61,14 +63,18 @@ pub mod compliance_hook {
     /// own discriminators here instead.
     ///
     /// Phase 1b: velocity-limit check. Phase 1c: Travel Rule memo check.
-    /// Phase 1d: sanctions re-screen (all implemented below). Large-
-    /// transaction flag (1e) is not implemented yet.
+    /// Phase 1d: sanctions re-screen. Phase 1e: large-transaction flag (all
+    /// implemented below). Checks 1b-1d are blocking (any failure reverts
+    /// the transfer, in order, so the first failing check is what's
+    /// reported); 1e is non-blocking and always runs last, after the
+    /// transfer has already passed every blocking check.
     pub fn fallback(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Result<()> {
         match TransferHookInstruction::unpack(data) {
             Ok(TransferHookInstruction::Execute { amount }) => {
                 check_velocity_limit(program_id, accounts, amount)?;
                 check_travel_rule_memo(accounts)?;
                 check_sanctions(program_id, accounts)?;
+                flag_large_transaction(accounts, amount)?;
                 Ok(())
             }
             _ => Err(error!(ComplianceHookError::UnrecognizedFallbackInstruction)),
@@ -81,6 +87,7 @@ pub mod compliance_hook {
 /// extra accounts we declared: 5 = velocity account (1b), 6 = Instructions
 /// sysvar (1c), 7 = sanctions registry (1d) — must stay in sync with
 /// initialize_extra_account_meta_list's declaration order.
+const EXECUTE_MINT_INDEX: usize = 1;
 const EXECUTE_DESTINATION_INDEX: usize = 2;
 const EXECUTE_OWNER_INDEX: usize = 3;
 const EXECUTE_VELOCITY_ACCOUNT_INDEX: usize = 5;
@@ -99,6 +106,23 @@ const EXECUTE_SANCTIONS_REGISTRY_INDEX: usize = 7;
 /// work. (Token-2022 extensions are appended after this base 165-byte
 /// account, not inline, so they don't shift this offset.)
 const TOKEN_ACCOUNT_OWNER_OFFSET: usize = 32;
+
+/// Reads a token account's `owner` field directly out of its raw account
+/// data, via TOKEN_ACCOUNT_OWNER_OFFSET. Used for the destination account,
+/// whose owner isn't one of Execute's base accounts (only its token
+/// account address is).
+fn read_token_account_owner(account_info: &AccountInfo) -> Result<Pubkey> {
+    let data = account_info.try_borrow_data()?;
+    require_gte!(
+        data.len(),
+        TOKEN_ACCOUNT_OWNER_OFFSET + 32,
+        ComplianceHookError::InvalidDestinationAccount
+    );
+    let owner_bytes: [u8; 32] = data[TOKEN_ACCOUNT_OWNER_OFFSET..TOKEN_ACCOUNT_OWNER_OFFSET + 32]
+        .try_into()
+        .map_err(|_| error!(ComplianceHookError::InvalidDestinationAccount))?;
+    Ok(Pubkey::new_from_array(owner_bytes))
+}
 
 fn check_velocity_limit(program_id: &Pubkey, accounts: &[AccountInfo], amount: u64) -> Result<()> {
     require_gte!(
@@ -215,19 +239,7 @@ fn check_sanctions(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<()> 
         SanctionsRegistry::try_deserialize(&mut &data[..])?
     };
 
-    let destination_owner = {
-        let data = destination_info.try_borrow_data()?;
-        require_gte!(
-            data.len(),
-            TOKEN_ACCOUNT_OWNER_OFFSET + 32,
-            ComplianceHookError::InvalidDestinationAccount
-        );
-        let owner_bytes: [u8; 32] = data
-            [TOKEN_ACCOUNT_OWNER_OFFSET..TOKEN_ACCOUNT_OWNER_OFFSET + 32]
-            .try_into()
-            .map_err(|_| error!(ComplianceHookError::InvalidDestinationAccount))?;
-        Pubkey::new_from_array(owner_bytes)
-    };
+    let destination_owner = read_token_account_owner(destination_info)?;
 
     let is_sanctioned = registry.entries.iter().any(|entry| {
         entry.address == *source_owner_info.key || entry.address == destination_owner
@@ -236,6 +248,40 @@ fn check_sanctions(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<()> 
     if is_sanctioned {
         return Err(error!(ComplianceHookError::SanctionedParty));
     }
+
+    Ok(())
+}
+
+/// Large-transaction flag (spec-001.md Move/transfer flow, check 4): logs a
+/// complete record — both parties, mint, amount, timestamp — for any
+/// transfer at or above LARGE_TRANSACTION_THRESHOLD_CENTS, mirroring real
+/// CTR reporting thresholds. Non-blocking by design: this never returns an
+/// error for the amount itself, only for genuinely malformed accounts
+/// (which the earlier blocking checks would already have caught in
+/// practice, since this runs last). Compliance handles the actual
+/// regulatory filing out-of-band, off the back of this log — the control's
+/// job is only to guarantee the record exists.
+fn flag_large_transaction(accounts: &[AccountInfo], amount: u64) -> Result<()> {
+    if amount < LARGE_TRANSACTION_THRESHOLD_CENTS {
+        return Ok(());
+    }
+
+    // No account-count guard needed here: this always runs after
+    // check_sanctions, which already requires accounts.len() to be at
+    // least EXECUTE_SANCTIONS_REGISTRY_INDEX + 1 (8) — well past the
+    // indices used below.
+    let source_owner = *accounts[EXECUTE_OWNER_INDEX].key;
+    let destination_owner = read_token_account_owner(&accounts[EXECUTE_DESTINATION_INDEX])?;
+    let mint = *accounts[EXECUTE_MINT_INDEX].key;
+    let timestamp = Clock::get()?.unix_timestamp;
+
+    emit!(LargeTransactionFlag {
+        source_owner,
+        destination_owner,
+        mint,
+        amount,
+        timestamp,
+    });
 
     Ok(())
 }

@@ -1,14 +1,13 @@
 /**
- * Re-verifies Phase 1d's sanctions registry check against the actual
+ * Re-verifies Phase 1e's large-transaction flag against the actual
  * persistent `solana-test-validator`, not litesvm — same reasoning as the
- * Phase 1b/1c on-chain scripts. Seeds the registry with one SyntheticTest
- * entry, confirms a transfer to that party reverts, and confirms an
- * unrelated transfer still succeeds.
+ * Phase 1b/1c/1d on-chain scripts. Confirms a $10,000.00 transfer succeeds
+ * and emits a "Program data: ..." log line (the LargeTransactionFlag
+ * event), and confirms a $9,999.99 transfer succeeds without emitting one.
  */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import crypto from "node:crypto";
 import {
   Connection,
   Keypair,
@@ -28,6 +27,8 @@ import {
   mintTo,
   createTransferCheckedWithTransferHookInstruction,
 } from "@solana/spl-token";
+import crypto from "node:crypto";
+
 const RPC_URL = process.env.SOLANA_RPC_URL ?? "http://localhost:8899";
 const HOOK_PROGRAM_ID = new PublicKey(
   "9AxMnpb5g8c8DSnDHNYEeafiTrSzWZbthoDEQpTKiD5z",
@@ -36,7 +37,6 @@ const MEMO_PROGRAM_V3 = new PublicKey(
   "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
 );
 const RISK_LOW = 0;
-const SANCTIONS_SOURCE_SYNTHETIC_TEST = 1;
 
 function loadLocalKeypair(): Keypair {
   const keypairPath = path.join(os.homedir(), ".config/solana/id.json");
@@ -58,19 +58,6 @@ function memoInstruction(text: string): TransactionInstruction {
     keys: [],
     data: Buffer.from(text, "utf-8"),
   });
-}
-
-// Borsh-encodes Vec<{ address: Pubkey, source: u8 }> the same way Anchor's
-// IDL client would, for the update_sanctions_registry instruction arg.
-function encodeSanctionsEntries(
-  entries: { address: PublicKey; source: number }[],
-): Buffer {
-  const len = Buffer.alloc(4);
-  len.writeUInt32LE(entries.length, 0);
-  const body = Buffer.concat(
-    entries.map((e) => Buffer.concat([e.address.toBuffer(), Buffer.from([e.source])])),
-  );
-  return Buffer.concat([len, body]);
 }
 
 async function main() {
@@ -156,10 +143,12 @@ async function main() {
     [Buffer.from("sanctions-registry")],
     HOOK_PROGRAM_ID,
   );
-  // Global PDA (seeds don't include the mint) — only initialized once ever
-  // across this validator's lifetime. Skip init on a re-run; update_sanctions_registry
-  // below (a full replace) still runs regardless, so the SyntheticTest entry
-  // ends up seeded either way.
+  // The sanctions registry is a single GLOBAL PDA (seeds don't include the
+  // mint), so it's only ever initialized once across this validator's
+  // lifetime — unlike the mint/velocity-account/extra-account-meta-list
+  // above, which are all fresh per script run. Skip init if it already
+  // exists (e.g. from a prior verify-sanctions-registry-onchain.ts run)
+  // rather than assuming a clean slate.
   const existingRegistry = await connection.getAccountInfo(sanctionsRegistry);
   if (existingRegistry) {
     console.log(`Sanctions registry already exists on-chain (global singleton): ${sanctionsRegistry.toBase58()}`);
@@ -192,26 +181,9 @@ async function main() {
   );
   console.log(`Minted $100,000.00 to source ATA ${sourceAta.address.toBase58()}`);
 
-  // --- Seed the registry with destOwner as a SyntheticTest entry ---
-  const updateSanctionsIx = new TransactionInstruction({
-    programId: HOOK_PROGRAM_ID,
-    keys: [
-      { pubkey: payer.publicKey, isSigner: true, isWritable: false },
-      { pubkey: sanctionsRegistry, isSigner: false, isWritable: true },
-    ],
-    data: Buffer.concat([
-      anchorDiscriminator("update_sanctions_registry"),
-      encodeSanctionsEntries([
-        { address: destOwner.publicKey, source: SANCTIONS_SOURCE_SYNTHETIC_TEST },
-      ]),
-    ]),
-  });
-  await sendAndConfirmTransaction(connection, new Transaction().add(updateSanctionsIx), [payer]);
-  console.log(`Sanctions registry seeded with SyntheticTest entry: ${destOwner.publicKey.toBase58()}`);
-
-  // --- Scenario 1: transfer to the sanctioned destination — must revert ---
+  // --- Scenario 1: $10,000.00 transfer — must succeed and emit the flag ---
   console.log();
-  console.log("--- Scenario 1: transfer to sanctioned (SyntheticTest) destination ---");
+  console.log("--- Scenario 1: transfer of $10,000.00 (at the threshold) ---");
   try {
     const ix = await createTransferCheckedWithTransferHookInstruction(
       connection, sourceAta.address, mint.publicKey, destAta.address, client.publicKey,
@@ -220,47 +192,58 @@ async function main() {
     const memoIx = memoInstruction(
       ":20:INV4521|:50K:Acme Corp Treasury|:59:Beta LLC Operating|:70:Invoice #4521",
     );
-    await sendAndConfirmTransaction(connection, new Transaction().add(memoIx, ix), [payer, client]);
-    console.log("FAIL  transfer to sanctioned destination incorrectly succeeded");
-    process.exitCode = 1;
+    const sig = await sendAndConfirmTransaction(connection, new Transaction().add(memoIx, ix), [payer, client]);
+    const tx = await connection.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+    const logs = tx?.meta?.logMessages ?? [];
+    const eventLog = logs.find((l) => l.startsWith("Program data: "));
+    if (eventLog) {
+      console.log(`PASS  $10,000.00 transfer succeeded on-chain and emitted a flag: ${sig}`);
+      console.log(`      ${eventLog}`);
+    } else {
+      console.log(`FAIL  $10,000.00 transfer succeeded but no "Program data:" log found. Logs: ${JSON.stringify(logs)}`);
+      process.exitCode = 1;
+    }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.log(`PASS  transfer to sanctioned destination correctly reverted on-chain: ${message.split("\n")[0]}`);
+    console.log(`FAIL  $10,000.00 transfer unexpectedly failed: ${err}`);
+    process.exitCode = 1;
   }
 
-  // --- Scenario 2: transfer to an unrelated, non-sanctioned destination — must succeed ---
+  // --- Scenario 2: $9,999.99 transfer — must succeed WITHOUT emitting the flag ---
   console.log();
-  console.log("--- Scenario 2: transfer to unrelated, non-sanctioned destination ---");
-  const dest2Owner = Keypair.generate();
-  const dest2Ata = await getOrCreateAssociatedTokenAccount(
-    connection, payer, mint.publicKey, dest2Owner.publicKey,
-    false, "confirmed", undefined, TOKEN_2022_PROGRAM_ID,
-  );
+  console.log("--- Scenario 2: transfer of $9,999.99 (just under the threshold) ---");
   try {
     const ix = await createTransferCheckedWithTransferHookInstruction(
-      connection, sourceAta.address, mint.publicKey, dest2Ata.address, client.publicKey,
-      10_000_00n, 2, [], "confirmed", TOKEN_2022_PROGRAM_ID,
+      connection, sourceAta.address, mint.publicKey, destAta.address, client.publicKey,
+      9_999_99n, 2, [], "confirmed", TOKEN_2022_PROGRAM_ID,
     );
     const memoIx = memoInstruction(
-      ":20:INV4522|:50K:Acme Corp Treasury|:59:Gamma Inc Operating|:70:Invoice #4522",
+      ":20:INV4522|:50K:Acme Corp Treasury|:59:Beta LLC Operating|:70:Invoice #4522",
     );
     const sig = await sendAndConfirmTransaction(connection, new Transaction().add(memoIx, ix), [payer, client]);
-    console.log(`PASS  transfer to unrelated destination succeeded on-chain: ${sig}`);
+    const tx = await connection.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+    const logs = tx?.meta?.logMessages ?? [];
+    const eventLog = logs.find((l) => l.startsWith("Program data: "));
+    if (!eventLog) {
+      console.log(`PASS  $9,999.99 transfer succeeded on-chain and correctly did NOT emit a flag: ${sig}`);
+    } else {
+      console.log(`FAIL  $9,999.99 transfer incorrectly emitted a flag: ${eventLog}`);
+      process.exitCode = 1;
+    }
   } catch (err) {
-    console.log(`FAIL  transfer to unrelated destination unexpectedly failed: ${err}`);
+    console.log(`FAIL  $9,999.99 transfer unexpectedly failed: ${err}`);
     process.exitCode = 1;
   }
 
   console.log();
   console.log(
     process.exitCode === 1
-      ? "SANCTIONS REGISTRY CHECK — REAL VALIDATOR VERIFICATION FAILED"
-      : "SANCTIONS REGISTRY CHECK — REAL VALIDATOR VERIFICATION PASSED",
+      ? "LARGE-TRANSACTION FLAG CHECK — REAL VALIDATOR VERIFICATION FAILED"
+      : "LARGE-TRANSACTION FLAG CHECK — REAL VALIDATOR VERIFICATION PASSED",
   );
 }
 
 main().catch((err) => {
-  console.error("SANCTIONS REGISTRY CHECK — REAL VALIDATOR VERIFICATION FAILED");
+  console.error("LARGE-TRANSACTION FLAG CHECK — REAL VALIDATOR VERIFICATION FAILED");
   console.error(err);
   process.exit(1);
 });

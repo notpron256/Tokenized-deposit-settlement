@@ -83,6 +83,24 @@ pub fn try_send(
         .map_err(|e| format!("{e:?}"))
 }
 
+/// Like `send`, but returns the transaction's captured program logs on
+/// success — for tests that need to confirm something was actually logged
+/// (e.g. an emitted event), not just that the transaction succeeded.
+pub fn send_capturing_logs(
+    svm: &mut LiteSVM,
+    ixs: &[Instruction],
+    payer: &Address,
+    signers: &[&Keypair],
+) -> Vec<String> {
+    let blockhash = svm.latest_blockhash();
+    let msg = Message::new_with_blockhash(ixs, Some(payer), &blockhash);
+    let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), signers)
+        .expect("failed to build transaction");
+    let result = svm.send_transaction(tx);
+    assert!(result.is_ok(), "transaction unexpectedly failed: {:?}", result.err());
+    result.unwrap().logs
+}
+
 pub struct TestSetup {
     pub svm: LiteSVM,
     pub payer: Keypair,

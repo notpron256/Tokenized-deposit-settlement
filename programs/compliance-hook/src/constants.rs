@@ -81,3 +81,8 @@ pub fn is_well_formed_travel_rule_memo(data: &[u8]) -> bool {
             None => false,
         })
 }
+
+/// Large-transaction flag threshold in integer cents ($10,000.00),
+/// mirroring real CTR reporting thresholds (spec-001.md Move/transfer
+/// flow, check 4). Non-blocking — flags, never reverts.
+pub const LARGE_TRANSACTION_THRESHOLD_CENTS: u64 = 1_000_000;
