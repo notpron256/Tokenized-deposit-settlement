@@ -21,15 +21,13 @@
  * gitignored to backend/keys/bank-ops.json, reused on later runs) — not
  * the developer's own default Solana CLI keypair, which here only pays
  * for and signs the mint account's own creation.
+ *
+ * Idempotent: if backend/keys/mint-address.json already points at a real
+ * mint, reuses it instead of creating a new one — Phase 3+ needs a single,
+ * stable mint address to build against, not a fresh one every run.
  */
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
-  Connection,
   Keypair,
-  PublicKey,
   SystemProgram,
   Transaction,
   sendAndConfirmTransaction,
@@ -48,100 +46,89 @@ import {
   getPermanentDelegate,
   getTransferHook,
 } from "@solana/spl-token";
-
-const RPC_URL = process.env.SOLANA_RPC_URL ?? "http://localhost:8899";
-const HOOK_PROGRAM_ID = new PublicKey(
-  "9AxMnpb5g8c8DSnDHNYEeafiTrSzWZbthoDEQpTKiD5z",
-);
-const DECIMALS = 2;
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const KEYS_DIR = path.join(__dirname, "..", "keys");
-const BANK_OPS_KEYPAIR_PATH = path.join(KEYS_DIR, "bank-ops.json");
-
-function loadLocalKeypair(): Keypair {
-  const keypairPath = path.join(os.homedir(), ".config/solana/id.json");
-  const secret = JSON.parse(fs.readFileSync(keypairPath, "utf-8"));
-  return Keypair.fromSecretKey(Uint8Array.from(secret));
-}
-
-/** Loads the persistent bank-ops authority keypair, generating and saving
- * one on first run so the same authority is reused across script runs —
- * not a fresh throwaway key every time. */
-function loadOrCreateBankOpsKeypair(): Keypair {
-  if (fs.existsSync(BANK_OPS_KEYPAIR_PATH)) {
-    const secret = JSON.parse(fs.readFileSync(BANK_OPS_KEYPAIR_PATH, "utf-8"));
-    return Keypair.fromSecretKey(Uint8Array.from(secret));
-  }
-  const keypair = Keypair.generate();
-  fs.mkdirSync(KEYS_DIR, { recursive: true });
-  fs.writeFileSync(BANK_OPS_KEYPAIR_PATH, JSON.stringify(Array.from(keypair.secretKey)));
-  console.log(`Generated new bank-ops keypair, saved to ${BANK_OPS_KEYPAIR_PATH}`);
-  return keypair;
-}
+import {
+  getConnection,
+  loadLocalKeypair,
+  loadOrCreateBankOpsKeypair,
+  readPersistedMintAddress,
+  persistMintAddress,
+  HOOK_PROGRAM_ID,
+  DECIMALS,
+} from "../src/solana/authorities.js";
 
 async function main() {
-  const connection = new Connection(RPC_URL, "confirmed");
+  const connection = getConnection();
   const payer = loadLocalKeypair();
-  const bankOps = loadOrCreateBankOpsKeypair();
+  const bankOps = await loadOrCreateBankOpsKeypair(connection);
 
-  console.log(`RPC: ${RPC_URL}`);
   console.log(`Payer (fee/rent payer): ${payer.publicKey.toBase58()}`);
   console.log(`Bank-ops authority (mint/freeze/permanent-delegate/transfer-hook): ${bankOps.publicKey.toBase58()}`);
   console.log(`Transfer Hook program (real, deployed): ${HOOK_PROGRAM_ID.toBase58()}`);
 
-  const extensions = [
-    ExtensionType.DefaultAccountState,
-    ExtensionType.PermanentDelegate,
-    ExtensionType.TransferHook,
-  ];
-  const mint = Keypair.generate();
-  const mintLen = getMintLen(extensions);
-  const mintRent = await connection.getMinimumBalanceForRentExemption(mintLen);
+  const existingMint = readPersistedMintAddress();
+  let mintPubkey;
 
-  const tx = new Transaction().add(
-    SystemProgram.createAccount({
-      fromPubkey: payer.publicKey,
-      newAccountPubkey: mint.publicKey,
-      space: mintLen,
-      lamports: mintRent,
-      programId: TOKEN_2022_PROGRAM_ID,
-    }),
-    createInitializeDefaultAccountStateInstruction(
-      mint.publicKey,
-      AccountState.Frozen,
-      TOKEN_2022_PROGRAM_ID,
-    ),
-    createInitializePermanentDelegateInstruction(
-      mint.publicKey,
-      bankOps.publicKey,
-      TOKEN_2022_PROGRAM_ID,
-    ),
-    createInitializeTransferHookInstruction(
-      mint.publicKey,
-      bankOps.publicKey,
-      HOOK_PROGRAM_ID,
-      TOKEN_2022_PROGRAM_ID,
-    ),
-    createInitializeMintInstruction(
-      mint.publicKey,
-      DECIMALS,
-      bankOps.publicKey, // mint authority
-      bankOps.publicKey, // freeze authority
-      TOKEN_2022_PROGRAM_ID,
-    ),
-  );
+  if (existingMint) {
+    console.log();
+    console.log(`Reusing existing mint: ${existingMint.toBase58()}`);
+    mintPubkey = existingMint;
+  } else {
+    const extensions = [
+      ExtensionType.DefaultAccountState,
+      ExtensionType.PermanentDelegate,
+      ExtensionType.TransferHook,
+    ];
+    const mint = Keypair.generate();
+    const mintLen = getMintLen(extensions);
+    const mintRent = await connection.getMinimumBalanceForRentExemption(mintLen);
 
-  const sig = await sendAndConfirmTransaction(connection, tx, [payer, mint]);
-  console.log();
-  console.log(`Mint created: ${mint.publicKey.toBase58()}`);
-  console.log(`Transaction: ${sig}`);
+    const tx = new Transaction().add(
+      SystemProgram.createAccount({
+        fromPubkey: payer.publicKey,
+        newAccountPubkey: mint.publicKey,
+        space: mintLen,
+        lamports: mintRent,
+        programId: TOKEN_2022_PROGRAM_ID,
+      }),
+      createInitializeDefaultAccountStateInstruction(
+        mint.publicKey,
+        AccountState.Frozen,
+        TOKEN_2022_PROGRAM_ID,
+      ),
+      createInitializePermanentDelegateInstruction(
+        mint.publicKey,
+        bankOps.publicKey,
+        TOKEN_2022_PROGRAM_ID,
+      ),
+      createInitializeTransferHookInstruction(
+        mint.publicKey,
+        bankOps.publicKey,
+        HOOK_PROGRAM_ID,
+        TOKEN_2022_PROGRAM_ID,
+      ),
+      createInitializeMintInstruction(
+        mint.publicKey,
+        DECIMALS,
+        bankOps.publicKey, // mint authority
+        bankOps.publicKey, // freeze authority
+        TOKEN_2022_PROGRAM_ID,
+      ),
+    );
+
+    const sig = await sendAndConfirmTransaction(connection, tx, [payer, mint]);
+    console.log();
+    console.log(`Mint created: ${mint.publicKey.toBase58()}`);
+    console.log(`Transaction: ${sig}`);
+    persistMintAddress(mint.publicKey);
+    console.log(`Saved to backend/keys/mint-address.json`);
+    mintPubkey = mint.publicKey;
+  }
 
   // --- Read back every extension from the chain and confirm explicitly —
   // not assumed present because it was requested in the instructions above.
   console.log();
   console.log("--- Read-back verification (on-chain state, not the instructions we sent) ---");
-  const mintInfo = await getMint(connection, mint.publicKey, "confirmed", TOKEN_2022_PROGRAM_ID);
+  const mintInfo = await getMint(connection, mintPubkey, "confirmed", TOKEN_2022_PROGRAM_ID);
 
   const defaultState = getDefaultAccountState(mintInfo);
   console.log(
@@ -177,7 +164,7 @@ async function main() {
   console.log();
   console.log(allCorrect ? "MINT CREATION VERIFIED" : "MINT CREATION FAILED VERIFICATION");
   console.log();
-  console.log(`Run this to inspect independently: spl-token display ${mint.publicKey.toBase58()} --program-2022`);
+  console.log(`Run this to inspect independently: spl-token display ${mintPubkey.toBase58()} --program-2022`);
 
   if (!allCorrect) {
     process.exit(1);
