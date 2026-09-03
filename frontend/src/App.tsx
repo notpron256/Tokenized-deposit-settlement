@@ -1,5 +1,6 @@
 import { useState } from "react";
 import "./App.css";
+import Onboarding from "./pages/Onboarding";
 
 const TABS = [
   "Onboarding",
@@ -44,8 +45,14 @@ function App() {
       </nav>
 
       <main className="tab-content">
-        <h2>{activeTab}</h2>
-        <p>Coming in {PLACEHOLDER_PHASE[activeTab]} of the implementation plan.</p>
+        {activeTab === "Onboarding" ? (
+          <Onboarding />
+        ) : (
+          <>
+            <h2>{activeTab}</h2>
+            <p>Coming in {PLACEHOLDER_PHASE[activeTab]} of the implementation plan.</p>
+          </>
+        )}
       </main>
     </div>
   );
