@@ -4,12 +4,12 @@ use spl_tlv_account_resolution::seeds::Seed;
 use spl_tlv_account_resolution::state::ExtraAccountMetaList;
 use spl_transfer_hook_interface::instruction::ExecuteInstruction;
 
-use crate::constants::{EXTRA_ACCOUNT_METAS_SEED, VELOCITY_SEED};
+use crate::constants::{EXTRA_ACCOUNT_METAS_SEED, SANCTIONS_REGISTRY_SEED, VELOCITY_SEED};
 use crate::error::ComplianceHookError;
 
 /// The number of extra accounts declared below — must stay in sync with the
 /// `size_of(N)` call and with lib.rs's EXECUTE_*_INDEX constants.
-const EXTRA_ACCOUNT_COUNT: usize = 2;
+const EXTRA_ACCOUNT_COUNT: usize = 3;
 
 /// Index of the source account owner/delegate ("authority") within the base
 /// four accounts every `Execute` call receives — per the Transfer Hook
@@ -52,8 +52,10 @@ pub struct InitializeExtraAccountMetaList<'info> {
 ///    correct address for whichever client is transferring.
 /// 2. (1c) the Instructions sysvar (a fixed, well-known address), needed for
 ///    the Travel Rule memo check's instruction introspection.
-/// Later phases (sanctions registry in 1d) will need an
-/// `update_extra_account_meta_list` instruction to grow this list further.
+/// 3. (1d) the sanctions registry — a single, global PDA owned by this
+///    program (seeds `[SANCTIONS_REGISTRY_SEED]`, no per-transfer
+///    component), so it's declared the same way as the velocity account
+///    (`new_with_seeds`) rather than as a precomputed fixed pubkey.
 pub fn handle_initialize_extra_account_meta_list(
     ctx: Context<InitializeExtraAccountMetaList>,
 ) -> Result<()> {
@@ -73,6 +75,14 @@ pub fn handle_initialize_extra_account_meta_list(
         .map_err(|_| error!(ComplianceHookError::ExtraAccountMetaInitFailed))?,
         ExtraAccountMeta::new_with_pubkey(&solana_instructions_sysvar::ID, false, false)
             .map_err(|_| error!(ComplianceHookError::ExtraAccountMetaInitFailed))?,
+        ExtraAccountMeta::new_with_seeds(
+            &[Seed::Literal {
+                bytes: SANCTIONS_REGISTRY_SEED.to_vec(),
+            }],
+            false,
+            false,
+        )
+        .map_err(|_| error!(ComplianceHookError::ExtraAccountMetaInitFailed))?,
     ];
 
     let mut account_data = ctx.accounts.extra_account_meta_list.try_borrow_mut_data()?;

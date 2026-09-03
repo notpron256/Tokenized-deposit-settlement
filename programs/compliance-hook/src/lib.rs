@@ -35,6 +35,23 @@ pub mod compliance_hook {
         crate::instructions::init_velocity_account::handle_init_velocity_account(ctx, risk_rating)
     }
 
+    /// One-time setup: creates the single, global sanctions registry PDA and
+    /// makes the caller its sync authority.
+    pub fn init_sanctions_registry(ctx: Context<InitSanctionsRegistry>) -> Result<()> {
+        crate::instructions::init_sanctions_registry::handle_init_sanctions_registry(ctx)
+    }
+
+    /// Called by the off-chain sync process (Phase 7) — or directly, for
+    /// this phase's own testing — to overwrite the registry with a fresh
+    /// snapshot. Full replace, not incremental; see
+    /// instructions::update_sanctions_registry for why.
+    pub fn update_sanctions_registry(
+        ctx: Context<UpdateSanctionsRegistry>,
+        entries: Vec<SanctionsEntry>,
+    ) -> Result<()> {
+        crate::instructions::update_sanctions_registry::handle_update_sanctions_registry(ctx, entries)
+    }
+
     /// Token-2022 CPIs into this program on every transfer using the raw
     /// Transfer Hook interface instruction format — NOT Anchor's own
     /// `global:<method>` discriminator scheme, which is why `execute` isn't
@@ -43,14 +60,15 @@ pub mod compliance_hook {
     /// `global:` discriminator, and we manually recognize the interface's
     /// own discriminators here instead.
     ///
-    /// Phase 1b: velocity-limit check. Phase 1c: Travel Rule memo check
-    /// (both implemented below). Sanctions re-screen (1d) and large-
-    /// transaction flag (1e) checks are not implemented yet.
+    /// Phase 1b: velocity-limit check. Phase 1c: Travel Rule memo check.
+    /// Phase 1d: sanctions re-screen (all implemented below). Large-
+    /// transaction flag (1e) is not implemented yet.
     pub fn fallback(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Result<()> {
         match TransferHookInstruction::unpack(data) {
             Ok(TransferHookInstruction::Execute { amount }) => {
                 check_velocity_limit(program_id, accounts, amount)?;
                 check_travel_rule_memo(accounts)?;
+                check_sanctions(program_id, accounts)?;
                 Ok(())
             }
             _ => Err(error!(ComplianceHookError::UnrecognizedFallbackInstruction)),
@@ -61,11 +79,26 @@ pub mod compliance_hook {
 /// Execute's accounts, per the Transfer Hook interface: 0 source, 1 mint,
 /// 2 destination, 3 owner/authority, 4 extra-account-meta-list PDA, 5.. the
 /// extra accounts we declared: 5 = velocity account (1b), 6 = Instructions
-/// sysvar (1c) — must stay in sync with initialize_extra_account_meta_list's
-/// declaration order.
+/// sysvar (1c), 7 = sanctions registry (1d) — must stay in sync with
+/// initialize_extra_account_meta_list's declaration order.
+const EXECUTE_DESTINATION_INDEX: usize = 2;
 const EXECUTE_OWNER_INDEX: usize = 3;
 const EXECUTE_VELOCITY_ACCOUNT_INDEX: usize = 5;
 const EXECUTE_INSTRUCTIONS_SYSVAR_INDEX: usize = 6;
+const EXECUTE_SANCTIONS_REGISTRY_INDEX: usize = 7;
+
+/// Byte offset of the `owner` field within a (Token-2022) token account's
+/// raw data. spl-token-2022-interface doesn't expose this as a named
+/// constant, so it's pinned here against the crate's own authoritative
+/// serialization logic rather than just the struct's field-declaration
+/// order: `impl Pack for Account` in `spl-token-2022-interface-3.1.1/src/state.rs`
+/// unpacks/packs the 165-byte base account as
+/// `array_refs![src, 32, 32, 8, 36, 1, 12, 8, 36]` — i.e.
+/// `mint(0..32), owner(32..64), amount(64..72), delegate(72..108), ...` —
+/// so `owner` is guaranteed to start at byte 32, not merely observed to
+/// work. (Token-2022 extensions are appended after this base 165-byte
+/// account, not inline, so they don't shift this offset.)
+const TOKEN_ACCOUNT_OWNER_OFFSET: usize = 32;
 
 fn check_velocity_limit(program_id: &Pubkey, accounts: &[AccountInfo], amount: u64) -> Result<()> {
     require_gte!(
@@ -146,6 +179,62 @@ fn check_travel_rule_memo(accounts: &[AccountInfo]) -> Result<()> {
 
     if !is_memo_program || !is_well_formed_travel_rule_memo(&preceding_ix.data) {
         return Err(error!(ComplianceHookError::MissingOrInvalidTravelRuleMemo));
+    }
+
+    Ok(())
+}
+
+/// Sanctions re-screen (spec-001.md Move/transfer flow, check 3): checks
+/// both parties to the transfer — the source account's owner and the
+/// destination account's owner — against the on-chain sanctions registry
+/// snapshot. Reads the registry directly; never makes a live network call
+/// (no on-chain program can). The destination's owner isn't one of
+/// Execute's base accounts, so it's read directly out of the destination
+/// token account's raw data rather than passed in separately.
+fn check_sanctions(program_id: &Pubkey, accounts: &[AccountInfo]) -> Result<()> {
+    require_gte!(
+        accounts.len(),
+        EXECUTE_SANCTIONS_REGISTRY_INDEX + 1,
+        ComplianceHookError::MissingSanctionsRegistry
+    );
+
+    let source_owner_info = &accounts[EXECUTE_OWNER_INDEX];
+    let destination_info = &accounts[EXECUTE_DESTINATION_INDEX];
+    let registry_info = &accounts[EXECUTE_SANCTIONS_REGISTRY_INDEX];
+
+    let (expected_registry_pda, _bump) =
+        Pubkey::find_program_address(&[SANCTIONS_REGISTRY_SEED], program_id);
+    require_keys_eq!(
+        *registry_info.key,
+        expected_registry_pda,
+        ComplianceHookError::InvalidSanctionsRegistry
+    );
+
+    let registry: SanctionsRegistry = {
+        let data = registry_info.try_borrow_data()?;
+        SanctionsRegistry::try_deserialize(&mut &data[..])?
+    };
+
+    let destination_owner = {
+        let data = destination_info.try_borrow_data()?;
+        require_gte!(
+            data.len(),
+            TOKEN_ACCOUNT_OWNER_OFFSET + 32,
+            ComplianceHookError::InvalidDestinationAccount
+        );
+        let owner_bytes: [u8; 32] = data
+            [TOKEN_ACCOUNT_OWNER_OFFSET..TOKEN_ACCOUNT_OWNER_OFFSET + 32]
+            .try_into()
+            .map_err(|_| error!(ComplianceHookError::InvalidDestinationAccount))?;
+        Pubkey::new_from_array(owner_bytes)
+    };
+
+    let is_sanctioned = registry.entries.iter().any(|entry| {
+        entry.address == *source_owner_info.key || entry.address == destination_owner
+    });
+
+    if is_sanctioned {
+        return Err(error!(ComplianceHookError::SanctionedParty));
     }
 
     Ok(())

@@ -20,4 +20,14 @@ pub enum ComplianceHookError {
     InvalidInstructionsSysvar,
     #[msg("Transfer must be immediately preceded by a well-formed Travel Rule memo: :20:<transaction reference>|:50K:<ordering customer>|:59:<beneficiary customer>|:70:<remittance information>")]
     MissingOrInvalidTravelRuleMemo,
+    #[msg("Sanctions registry already has the maximum number of entries")]
+    SanctionsRegistryFull,
+    #[msg("Execute was not given the sanctions registry as an extra account")]
+    MissingSanctionsRegistry,
+    #[msg("The provided account is not the real sanctions registry PDA")]
+    InvalidSanctionsRegistry,
+    #[msg("Destination account data is too short to read its owner")]
+    InvalidDestinationAccount,
+    #[msg("Transfer involves a sanctioned party")]
+    SanctionedParty,
 }

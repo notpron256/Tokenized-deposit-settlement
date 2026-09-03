@@ -9,6 +9,15 @@ pub const EXTRA_ACCOUNT_METAS_SEED: &[u8] = b"extra-account-metas";
 /// `[VELOCITY_SEED, client_pubkey]`.
 pub const VELOCITY_SEED: &[u8] = b"velocity";
 
+/// Seed for the single, global sanctions-registry PDA.
+pub const SANCTIONS_REGISTRY_SEED: &[u8] = b"sanctions-registry";
+
+/// Fixed capacity for the sanctions registry (see state::sanctions_registry_space).
+pub const MAX_SANCTIONS_ENTRIES: usize = 200;
+
+pub const SANCTIONS_SOURCE_OFAC_SDN: u8 = 0;
+pub const SANCTIONS_SOURCE_SYNTHETIC_TEST: u8 = 1;
+
 /// Fixed-window velocity check duration (spec-001.md: a deliberate POC
 /// simplification — a fixed window, not a true sliding window).
 pub const VELOCITY_WINDOW_SECONDS: i64 = 3600;

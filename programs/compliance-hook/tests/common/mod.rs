@@ -96,14 +96,15 @@ pub struct TestSetup {
     pub dest: Keypair,
     pub extra_account_meta_list: AnchorPubkey,
     pub velocity_account: AnchorPubkey,
+    pub sanctions_registry: AnchorPubkey,
 }
 
 impl TestSetup {
     /// Accounts to append to a TransferChecked instruction, per
     /// spl_transfer_hook_interface::offchain's resolution order: resolved
-    /// extra accounts first (velocity account, then Instructions sysvar),
-    /// then the hook program itself, then the validation/extra-account-
-    /// meta-list PDA last.
+    /// extra accounts first (velocity account, then Instructions sysvar,
+    /// then the sanctions registry), then the hook program itself, then the
+    /// validation/extra-account-meta-list PDA last.
     pub fn extra_transfer_accounts(&self) -> Vec<AccountMeta> {
         vec![
             AccountMeta {
@@ -113,6 +114,11 @@ impl TestSetup {
             },
             AccountMeta {
                 pubkey: Address::from(solana_sdk_ids::sysvar::instructions::ID.to_bytes()),
+                is_signer: false,
+                is_writable: false,
+            },
+            AccountMeta {
+                pubkey: anchor_pubkey_to_addr(self.sanctions_registry),
                 is_signer: false,
                 is_writable: false,
             },
@@ -216,6 +222,20 @@ pub fn setup(risk_rating: u8) -> TestSetup {
     );
     send(&mut svm, &[ix_init_velocity], &payer.pubkey(), &[&payer]);
 
+    let (sanctions_registry, _bump) =
+        AnchorPubkey::find_program_address(&[b"sanctions-registry"], &hook_program_id);
+    let ix_init_sanctions = to_sol_instruction(
+        hook_program_id,
+        compliance_hook::accounts::InitSanctionsRegistry {
+            authority: addr_to_anchor_pubkey(payer.pubkey()),
+            sanctions_registry,
+            system_program: anchor_lang::solana_program::system_program::ID,
+        }
+        .to_account_metas(None),
+        compliance_hook::instruction::InitSanctionsRegistry {}.data(),
+    );
+    send(&mut svm, &[ix_init_sanctions], &payer.pubkey(), &[&payer]);
+
     let source = Keypair::new();
     let dest = Keypair::new();
     let token_account_len =
@@ -275,5 +295,6 @@ pub fn setup(risk_rating: u8) -> TestSetup {
         dest,
         extra_account_meta_list,
         velocity_account,
+        sanctions_registry,
     }
 }

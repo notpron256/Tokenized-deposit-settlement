@@ -29,12 +29,12 @@ Similarly, "Required Memo" is, as commonly implemented, an **account-level** ext
 
 ## Build order
 
-### Phase 0 — Repo scaffold
+### Phase 0 — Repo scaffold ✅
 Files: `programs/compliance-hook/` (Anchor workspace init), `backend/` (Express + TS skeleton), `frontend/` (Vite + React + TS skeleton), `docker-compose.yml` (Postgres), `.env.example`.
 
 **Done test:** `docker compose up -d`, then `npm run dev` in `frontend/` opens `localhost:5173` showing a blank shell page with nav tabs (Onboarding / Fund / Transfer / Redeem / Compliance / Reconciliation) and no crashes.
 
-### Phase 0.5 — Extension verification spike
+### Phase 0.5 — Extension verification spike ✅
 File: `backend/scripts/verify-extensions.ts`.
 
 Creates a throwaway Token-2022 mint on localhost configured with Default Account State, Permanent Delegate, Transfer Hook (pointed at a placeholder program ID), and whatever the real burn-co-sign mechanism turns out to be; creates one ATA and enables `MemoTransfer` on it.
@@ -44,14 +44,14 @@ Creates a throwaway Token-2022 mint on localhost configured with Default Account
 ### Phase 1 — Transfer Hook / compliance Anchor program
 Built in five verifiable increments (`programs/compliance-hook/src/lib.rs` + Anchor tests in `programs/compliance-hook/tests/`):
 
-- **1a.** Scaffold + `initialize_extra_account_meta_list` only, all checks stubbed to pass.
+- **1a.** ✅ Scaffold + `initialize_extra_account_meta_list` only, all checks stubbed to pass.
   **Done test:** `anchor build && anchor deploy`, then `solana program show <PROGRAM_ID>` against localhost shows it deployed.
-- **1b.** Velocity-limit check (init velocity account + running-total/window logic).
-  **Done test:** `anchor test` output shows a passing scenario (transfer under cap succeeds) and a failing-as-expected scenario (transfer over cap reverts), printed with clear ✅/❌ per case.
-- **1c.** Travel Rule memo check.
-  **Done test:** `anchor test` scenario — transfer with no memo reverts, transfer with well-formed memo succeeds.
-- **1d.** Sanctions registry (init/update instructions + hook read). Each registry entry stores `{ address: Pubkey, source: SanctionsSource }` where `SanctionsSource` is an on-chain enum (`OfacSdn` / `SyntheticTest`), not a flat pubkey list — so the real/synthetic distinction is a data-structure fact, not a label applied later off-chain.
-  **Done test:** `anchor test` seeds one entry tagged `SyntheticTest` into the registry, shows a transfer involving it reverting, and an unrelated transfer succeeding.
+- **1b.** ✅ Velocity-limit check (init velocity account + running-total/window logic).
+  **Done test:** `anchor test` output shows a passing scenario (transfer under cap succeeds) and a failing-as-expected scenario (transfer over cap reverts), printed with clear ✅/❌ per case. **Verified**, both in `anchor test` and against the real persistent validator.
+- **1c.** ✅ Travel Rule memo check, upgraded to MT103-tagged fields (`:20:`/`:50K:`/`:59:`/`:70:`) after the initial 3-field placeholder — see spec-001.md.
+  **Done test:** `anchor test` scenario — transfer with no memo reverts, transfer with well-formed memo succeeds. Also covers a malformed-but-present memo reverting (missing tag / empty field), added per the negative-case-coverage norm in AGENTS.md. **Verified**, both in `anchor test` and against the real persistent validator.
+- **1d.** ✅ Sanctions registry (init/update instructions + hook read). Each registry entry stores `{ address: Pubkey, source: u8 }` — `0` = `OfacSdn`, `1` = `SyntheticTest`, as named constants rather than a literal Rust `enum` (same reasoning as `risk_rating` in 1b: avoids depending on borsh's enum-derive behavior in this Anchor version, a detail worth naming since it wasn't decided until implementation), not a flat pubkey list — so the real/synthetic distinction is a data-structure fact, not a label applied later off-chain.
+  **Done test:** `anchor test` seeds one entry tagged `SyntheticTest` into the registry, shows a transfer involving it reverting, and an unrelated transfer succeeding. **Verified**, both in `anchor test` and against the real persistent validator (`backend/scripts/verify-sanctions-registry-onchain.ts`).
 - **1e.** Large-transaction flag (event emit at ≥$10,000, non-blocking).
   **Done test:** `anchor test` shows a ≥$10,000 transfer succeeding *and* an emitted log/event captured in the test output.
 
