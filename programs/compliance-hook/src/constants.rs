@@ -32,3 +32,43 @@ pub fn velocity_cap_for_risk_rating(risk_rating: u8) -> Option<u64> {
         _ => None,
     }
 }
+
+/// SPL Memo program addresses accepted for the Travel Rule check — both the
+/// original (v1) and current (v3) programs, matching Token-2022's own
+/// MemoTransfer extension's convention of accepting either.
+pub const MEMO_PROGRAM_V1: &str = "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo";
+pub const MEMO_PROGRAM_V3: &str = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+
+/// Travel Rule memo format (spec-001.md: "formatted in the spirit of SWIFT
+/// MT103 fields") — modeled on MT103's field *tags*, for recognizability to
+/// anyone with banking-ops experience, not literal SWIFT network compliance
+/// (MT103 was itself retired from the live SWIFT network in November 2025
+/// in favor of ISO 20022's pacs.008 — see spec-001.md). A compact,
+/// on-chain-parseable stand-in: four '|'-delimited fields, each prefixed
+/// with its real MT103 tag, in order:
+///
+///   `:20:<transaction reference>|:50K:<ordering customer>|:59:<beneficiary customer>|:70:<remittance information>`
+pub const TRAVEL_RULE_MEMO_DELIMITER: char = '|';
+pub const TRAVEL_RULE_MEMO_TAGS: [&str; 4] = [":20:", ":50K:", ":59:", ":70:"];
+
+/// Checks the raw bytes of a memo instruction's data against the Travel
+/// Rule format above: exactly `TRAVEL_RULE_MEMO_TAGS.len()` fields, each
+/// starting with its expected tag (in order) and carrying non-empty
+/// content after it. No further SWIFT message-format validation is done —
+/// this is a recognizable stand-in, not a SWIFT parser.
+pub fn is_well_formed_travel_rule_memo(data: &[u8]) -> bool {
+    let Ok(text) = core::str::from_utf8(data) else {
+        return false;
+    };
+    let fields: Vec<&str> = text.split(TRAVEL_RULE_MEMO_DELIMITER).collect();
+    if fields.len() != TRAVEL_RULE_MEMO_TAGS.len() {
+        return false;
+    }
+    fields
+        .iter()
+        .zip(TRAVEL_RULE_MEMO_TAGS.iter())
+        .all(|(field, tag)| match field.strip_prefix(tag) {
+            Some(content) => !content.trim().is_empty(),
+            None => false,
+        })
+}

@@ -7,6 +7,10 @@ use spl_transfer_hook_interface::instruction::ExecuteInstruction;
 use crate::constants::{EXTRA_ACCOUNT_METAS_SEED, VELOCITY_SEED};
 use crate::error::ComplianceHookError;
 
+/// The number of extra accounts declared below — must stay in sync with the
+/// `size_of(N)` call and with lib.rs's EXECUTE_*_INDEX constants.
+const EXTRA_ACCOUNT_COUNT: usize = 2;
+
 /// Index of the source account owner/delegate ("authority") within the base
 /// four accounts every `Execute` call receives — per the Transfer Hook
 /// interface's own fixed ordering (source, mint, destination, owner).
@@ -30,7 +34,7 @@ pub struct InitializeExtraAccountMetaList<'info> {
     #[account(
         init,
         payer = authority,
-        space = ExtraAccountMetaList::size_of(1).unwrap(),
+        space = ExtraAccountMetaList::size_of(EXTRA_ACCOUNT_COUNT).unwrap(),
         seeds = [EXTRA_ACCOUNT_METAS_SEED, mint.key().as_ref()],
         bump,
     )]
@@ -41,29 +45,35 @@ pub struct InitializeExtraAccountMetaList<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// Phase 1b: declares the sender's velocity account as the one extra account
-/// every `Execute` call needs, resolved dynamically per-transfer from seeds
-/// `[VELOCITY_SEED, <source account's owner>]` rather than a fixed pubkey —
-/// Token-2022 (and any off-chain resolver) derives the correct address for
-/// whichever client is transferring. Later phases (sanctions registry in 1d)
-/// will need an `update_extra_account_meta_list` instruction to grow this
-/// list further.
+/// Declares, in order, the extra accounts every `Execute` call needs:
+/// 1. (1b) the sender's velocity account, resolved dynamically per-transfer
+///    from seeds `[VELOCITY_SEED, <source account's owner>]` rather than a
+///    fixed pubkey — Token-2022 (and any off-chain resolver) derives the
+///    correct address for whichever client is transferring.
+/// 2. (1c) the Instructions sysvar (a fixed, well-known address), needed for
+///    the Travel Rule memo check's instruction introspection.
+/// Later phases (sanctions registry in 1d) will need an
+/// `update_extra_account_meta_list` instruction to grow this list further.
 pub fn handle_initialize_extra_account_meta_list(
     ctx: Context<InitializeExtraAccountMetaList>,
 ) -> Result<()> {
-    let extra_account_metas = [ExtraAccountMeta::new_with_seeds(
-        &[
-            Seed::Literal {
-                bytes: VELOCITY_SEED.to_vec(),
-            },
-            Seed::AccountKey {
-                index: EXECUTE_OWNER_ACCOUNT_INDEX,
-            },
-        ],
-        false,
-        true,
-    )
-    .map_err(|_| error!(ComplianceHookError::ExtraAccountMetaInitFailed))?];
+    let extra_account_metas = [
+        ExtraAccountMeta::new_with_seeds(
+            &[
+                Seed::Literal {
+                    bytes: VELOCITY_SEED.to_vec(),
+                },
+                Seed::AccountKey {
+                    index: EXECUTE_OWNER_ACCOUNT_INDEX,
+                },
+            ],
+            false,
+            true,
+        )
+        .map_err(|_| error!(ComplianceHookError::ExtraAccountMetaInitFailed))?,
+        ExtraAccountMeta::new_with_pubkey(&solana_instructions_sysvar::ID, false, false)
+            .map_err(|_| error!(ComplianceHookError::ExtraAccountMetaInitFailed))?,
+    ];
 
     let mut account_data = ctx.accounts.extra_account_meta_list.try_borrow_mut_data()?;
     ExtraAccountMetaList::init::<ExecuteInstruction>(&mut account_data, &extra_account_metas)

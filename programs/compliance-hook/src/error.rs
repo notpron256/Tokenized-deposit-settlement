@@ -14,4 +14,10 @@ pub enum ComplianceHookError {
     InvalidVelocityAccount,
     #[msg("Transfer would exceed the client's hourly velocity limit")]
     VelocityLimitExceeded,
+    #[msg("Execute was not given the Instructions sysvar as an extra account")]
+    MissingInstructionsSysvar,
+    #[msg("The provided account is not the real Instructions sysvar")]
+    InvalidInstructionsSysvar,
+    #[msg("Transfer must be immediately preceded by a well-formed Travel Rule memo: :20:<transaction reference>|:50K:<ordering customer>|:59:<beneficiary customer>|:70:<remittance information>")]
+    MissingOrInvalidTravelRuleMemo,
 }

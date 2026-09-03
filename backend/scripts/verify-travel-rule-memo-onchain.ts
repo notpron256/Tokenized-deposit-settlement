@@ -1,19 +1,12 @@
 /**
- * Re-verifies Phase 1b's velocity-limit check against the actual persistent
- * `solana-test-validator` this whole build runs against — not litesvm.
- * `anchor test` (plan-001.md Phase 1b's stated done-test) runs against an
- * ephemeral in-process litesvm environment; this script exercises the same
- * two scenarios (transfer under cap succeeds, transfer over cap reverts)
- * against the real, currently-deployed compliance-hook program on localhost,
- * requested as additional confirmation before committing Phase 1b.
- *
- * Nothing here is the real mint (Phase 2) or onboarding flow (Phase 3) —
- * it's a throwaway mint/accounts setup, same spirit as the Phase 0.5 spike.
- *
- * Updated after Phase 1c: every transfer now also needs a well-formed
- * Travel Rule memo (the hook runs both checks), so both transfers below
- * are preceded by one — otherwise they'd revert for an unrelated reason
- * and this script would no longer be testing what it says it tests.
+ * Re-verifies Phase 1c's Travel Rule memo check against the actual
+ * persistent `solana-test-validator`, not litesvm — same reasoning as
+ * verify-velocity-limit-onchain.ts for Phase 1b. `anchor test` runs against
+ * an ephemeral in-process litesvm environment; this script exercises the
+ * same four scenarios (transfer with no memo reverts; transfer with a
+ * well-formed memo succeeds; transfer with a memo missing a required
+ * MT103 tag reverts; transfer with an empty tagged field reverts) against
+ * the real, currently-deployed compliance-hook program on localhost.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -43,10 +36,10 @@ const RPC_URL = process.env.SOLANA_RPC_URL ?? "http://localhost:8899";
 const HOOK_PROGRAM_ID = new PublicKey(
   "9AxMnpb5g8c8DSnDHNYEeafiTrSzWZbthoDEQpTKiD5z",
 );
-const RISK_MEDIUM = 1; // matches compliance-hook's RISK_MEDIUM constant; cap = $2,000,000.00/hr
 const MEMO_PROGRAM_V3 = new PublicKey(
   "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
 );
+const RISK_LOW = 0;
 
 function loadLocalKeypair(): Keypair {
   const keypairPath = path.join(os.homedir(), ".config/solana/id.json");
@@ -77,8 +70,6 @@ async function main() {
   console.log(`Payer: ${payer.publicKey.toBase58()}`);
   console.log(`compliance-hook program: ${HOOK_PROGRAM_ID.toBase58()}`);
 
-  // --- mint with just the Transfer Hook extension (minimal, matching the
-  // Phase 1b Rust test's scope — no other extensions needed for this check) ---
   const mint = Keypair.generate();
   const mintLen = getMintLen([ExtensionType.TransferHook]);
   const mintRent = await connection.getMinimumBalanceForRentExemption(mintLen);
@@ -108,7 +99,6 @@ async function main() {
   await sendAndConfirmTransaction(connection, createMintTx, [payer, mint]);
   console.log(`Mint created on-chain: ${mint.publicKey.toBase58()}`);
 
-  // --- our own initialize_extra_account_meta_list instruction ---
   const [extraAccountMetaList] = PublicKey.findProgramAddressSync(
     [Buffer.from("extra-account-metas"), mint.publicKey.toBuffer()],
     HOOK_PROGRAM_ID,
@@ -126,7 +116,6 @@ async function main() {
   await sendAndConfirmTransaction(connection, new Transaction().add(initExtraIx), [payer]);
   console.log(`extra-account-meta-list initialized on-chain: ${extraAccountMetaList.toBase58()}`);
 
-  // --- init_velocity_account for the client, risk = Medium ($2,000,000/hr) ---
   const client = Keypair.generate();
   await connection.confirmTransaction(
     await connection.requestAirdrop(client.publicKey, 1_000_000_000),
@@ -147,13 +136,12 @@ async function main() {
     ],
     data: Buffer.concat([
       anchorDiscriminator("init_velocity_account"),
-      Buffer.from([RISK_MEDIUM]),
+      Buffer.from([RISK_LOW]),
     ]),
   });
   await sendAndConfirmTransaction(connection, new Transaction().add(initVelocityIx), [payer]);
-  console.log(`Velocity account initialized on-chain: ${velocityAccount.toBase58()} (risk=Medium, cap=$2,000,000.00/hr)`);
+  console.log(`Velocity account initialized on-chain: ${velocityAccount.toBase58()} (risk=Low)`);
 
-  // --- source (owner=client) and destination token accounts ---
   const destOwner = Keypair.generate();
   const sourceAta = await getOrCreateAssociatedTokenAccount(
     connection, payer, mint.publicKey, client.publicKey,
@@ -163,65 +151,98 @@ async function main() {
     connection, payer, mint.publicKey, destOwner.publicKey,
     false, "confirmed", undefined, TOKEN_2022_PROGRAM_ID,
   );
-
   await mintTo(
     connection, payer, mint.publicKey, sourceAta.address, payer,
-    300_000_000n, [], undefined, TOKEN_2022_PROGRAM_ID,
+    100_000_00n, [], undefined, TOKEN_2022_PROGRAM_ID,
   );
-  console.log(`Minted $3,000,000.00 to source ATA ${sourceAta.address.toBase58()}`);
+  console.log(`Minted $100,000.00 to source ATA ${sourceAta.address.toBase58()}`);
 
-  // --- Scenario 1: transfer $1,500,000.00 — under the $2,000,000/hr cap ---
+  // --- Scenario 1: transfer with no preceding memo — must revert ---
   console.log();
-  console.log("--- Scenario 1: transfer $1,500,000.00 (under $2,000,000.00/hr cap) ---");
+  console.log("--- Scenario 1: transfer with no Travel Rule memo ---");
   try {
-    const ix1 = await createTransferCheckedWithTransferHookInstruction(
+    const ix = await createTransferCheckedWithTransferHookInstruction(
       connection, sourceAta.address, mint.publicKey, destAta.address, client.publicKey,
-      150_000_000n, 2, [], "confirmed", TOKEN_2022_PROGRAM_ID,
+      10_000_00n, 2, [], "confirmed", TOKEN_2022_PROGRAM_ID,
     );
-    const memo1 = memoInstruction(
-      ":20:INV4521|:50K:Acme Corp Treasury|:59:Beta LLC Operating|:70:Invoice #4521",
-    );
-    const sig1 = await sendAndConfirmTransaction(
-      connection,
-      new Transaction().add(memo1, ix1),
-      [payer, client],
-    );
-    console.log(`PASS  under-cap transfer succeeded on-chain: ${sig1}`);
-  } catch (err) {
-    console.log(`FAIL  under-cap transfer unexpectedly failed: ${err}`);
-    process.exitCode = 1;
-  }
-
-  // --- Scenario 2: transfer $1,000,000.00 more — would reach $2,500,000.00,
-  // over the $2,000,000/hr cap — must revert ---
-  console.log();
-  console.log("--- Scenario 2: transfer $1,000,000.00 more (would reach $2,500,000.00, over cap) ---");
-  try {
-    const ix2 = await createTransferCheckedWithTransferHookInstruction(
-      connection, sourceAta.address, mint.publicKey, destAta.address, client.publicKey,
-      100_000_000n, 2, [], "confirmed", TOKEN_2022_PROGRAM_ID,
-    );
-    const memo2 = memoInstruction(
-      ":20:INV4522|:50K:Acme Corp Treasury|:59:Beta LLC Operating|:70:Invoice #4522",
-    );
-    await sendAndConfirmTransaction(connection, new Transaction().add(memo2, ix2), [payer, client]);
-    console.log("FAIL  over-cap transfer incorrectly succeeded");
+    await sendAndConfirmTransaction(connection, new Transaction().add(ix), [payer, client]);
+    console.log("FAIL  transfer with no memo incorrectly succeeded");
     process.exitCode = 1;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.log(`PASS  over-cap transfer correctly reverted on-chain: ${message.split("\n")[0]}`);
+    console.log(`PASS  transfer with no memo correctly reverted on-chain: ${message.split("\n")[0]}`);
+  }
+
+  // --- Scenario 2: transfer preceded by a well-formed Travel Rule memo — must succeed ---
+  console.log();
+  console.log("--- Scenario 2: transfer with well-formed Travel Rule memo ---");
+  try {
+    const transferIx = await createTransferCheckedWithTransferHookInstruction(
+      connection, sourceAta.address, mint.publicKey, destAta.address, client.publicKey,
+      10_000_00n, 2, [], "confirmed", TOKEN_2022_PROGRAM_ID,
+    );
+    const memoIx = memoInstruction(
+      ":20:INV4521|:50K:Acme Corp Treasury|:59:Beta LLC Operating|:70:Invoice #4521",
+    );
+    const sig = await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(memoIx, transferIx),
+      [payer, client],
+    );
+    console.log(`PASS  transfer with well-formed memo succeeded on-chain: ${sig}`);
+  } catch (err) {
+    console.log(`FAIL  transfer with well-formed memo unexpectedly failed: ${err}`);
+    process.exitCode = 1;
+  }
+
+  // --- Scenario 3: memo present but missing the :50K: tag entirely — must revert ---
+  console.log();
+  console.log("--- Scenario 3: transfer with malformed memo (missing :50K: tag) ---");
+  try {
+    const ix = await createTransferCheckedWithTransferHookInstruction(
+      connection, sourceAta.address, mint.publicKey, destAta.address, client.publicKey,
+      10_000_00n, 2, [], "confirmed", TOKEN_2022_PROGRAM_ID,
+    );
+    const badMemoIx = memoInstruction(
+      ":20:INV4521|Acme Corp Treasury|:59:Beta LLC Operating|:70:Invoice #4521",
+    );
+    await sendAndConfirmTransaction(connection, new Transaction().add(badMemoIx, ix), [payer, client]);
+    console.log("FAIL  transfer with malformed memo (missing :50K: tag) incorrectly succeeded");
+    process.exitCode = 1;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(`PASS  transfer with malformed memo (missing :50K: tag) correctly reverted on-chain: ${message.split("\n")[0]}`);
+  }
+
+  // --- Scenario 4: all four tags present, but :59: field left empty — must revert ---
+  console.log();
+  console.log("--- Scenario 4: transfer with empty :59: (beneficiary) field ---");
+  try {
+    const ix = await createTransferCheckedWithTransferHookInstruction(
+      connection, sourceAta.address, mint.publicKey, destAta.address, client.publicKey,
+      10_000_00n, 2, [], "confirmed", TOKEN_2022_PROGRAM_ID,
+    );
+    const emptyFieldMemoIx = memoInstruction(
+      ":20:INV4521|:50K:Acme Corp Treasury|:59:|:70:Invoice #4521",
+    );
+    await sendAndConfirmTransaction(connection, new Transaction().add(emptyFieldMemoIx, ix), [payer, client]);
+    console.log("FAIL  transfer with empty :59: field incorrectly succeeded");
+    process.exitCode = 1;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(`PASS  transfer with empty :59: field correctly reverted on-chain: ${message.split("\n")[0]}`);
   }
 
   console.log();
   console.log(
     process.exitCode === 1
-      ? "VELOCITY LIMIT CHECK — REAL VALIDATOR VERIFICATION FAILED"
-      : "VELOCITY LIMIT CHECK — REAL VALIDATOR VERIFICATION PASSED",
+      ? "TRAVEL RULE MEMO CHECK — REAL VALIDATOR VERIFICATION FAILED"
+      : "TRAVEL RULE MEMO CHECK — REAL VALIDATOR VERIFICATION PASSED",
   );
 }
 
 main().catch((err) => {
-  console.error("VELOCITY LIMIT CHECK — REAL VALIDATOR VERIFICATION FAILED");
+  console.error("TRAVEL RULE MEMO CHECK — REAL VALIDATOR VERIFICATION FAILED");
   console.error(err);
   process.exit(1);
 });

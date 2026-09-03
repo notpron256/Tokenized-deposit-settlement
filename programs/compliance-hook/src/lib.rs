@@ -43,13 +43,15 @@ pub mod compliance_hook {
     /// `global:` discriminator, and we manually recognize the interface's
     /// own discriminators here instead.
     ///
-    /// Phase 1b: velocity-limit check implemented (this function). Travel
-    /// Rule memo (1c), sanctions re-screen (1d), and large-transaction flag
-    /// (1e) checks are not implemented yet.
+    /// Phase 1b: velocity-limit check. Phase 1c: Travel Rule memo check
+    /// (both implemented below). Sanctions re-screen (1d) and large-
+    /// transaction flag (1e) checks are not implemented yet.
     pub fn fallback(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Result<()> {
         match TransferHookInstruction::unpack(data) {
             Ok(TransferHookInstruction::Execute { amount }) => {
-                check_velocity_limit(program_id, accounts, amount)
+                check_velocity_limit(program_id, accounts, amount)?;
+                check_travel_rule_memo(accounts)?;
+                Ok(())
             }
             _ => Err(error!(ComplianceHookError::UnrecognizedFallbackInstruction)),
         }
@@ -58,9 +60,12 @@ pub mod compliance_hook {
 
 /// Execute's accounts, per the Transfer Hook interface: 0 source, 1 mint,
 /// 2 destination, 3 owner/authority, 4 extra-account-meta-list PDA, 5.. the
-/// extra accounts we declared (just the sender's velocity account, so far).
+/// extra accounts we declared: 5 = velocity account (1b), 6 = Instructions
+/// sysvar (1c) — must stay in sync with initialize_extra_account_meta_list's
+/// declaration order.
 const EXECUTE_OWNER_INDEX: usize = 3;
 const EXECUTE_VELOCITY_ACCOUNT_INDEX: usize = 5;
+const EXECUTE_INSTRUCTIONS_SYSVAR_INDEX: usize = 6;
 
 fn check_velocity_limit(program_id: &Pubkey, accounts: &[AccountInfo], amount: u64) -> Result<()> {
     require_gte!(
@@ -106,6 +111,41 @@ fn check_velocity_limit(program_id: &Pubkey, accounts: &[AccountInfo], amount: u
     {
         let mut data = velocity_account_info.try_borrow_mut_data()?;
         velocity_state.try_serialize(&mut &mut data[..])?;
+    }
+
+    Ok(())
+}
+
+/// Travel Rule check (spec-001.md Move/transfer flow, check 2): the transfer
+/// must be immediately preceded, in the same transaction, by an SPL Memo
+/// instruction carrying well-formed originator/beneficiary/purpose data.
+/// This is Token-2022's own `MemoTransfer` account extension's job to
+/// require *a* memo be present; this check goes further and validates its
+/// *structure*, via instruction introspection (the Instructions sysvar) —
+/// not by reading the mint/account extension state at all.
+fn check_travel_rule_memo(accounts: &[AccountInfo]) -> Result<()> {
+    require_gte!(
+        accounts.len(),
+        EXECUTE_INSTRUCTIONS_SYSVAR_INDEX + 1,
+        ComplianceHookError::MissingInstructionsSysvar
+    );
+
+    let instructions_sysvar_info = &accounts[EXECUTE_INSTRUCTIONS_SYSVAR_INDEX];
+    require_keys_eq!(
+        *instructions_sysvar_info.key,
+        solana_instructions_sysvar::ID,
+        ComplianceHookError::InvalidInstructionsSysvar
+    );
+
+    let preceding_ix = solana_instructions_sysvar::get_instruction_relative(-1, instructions_sysvar_info)
+        .map_err(|_| error!(ComplianceHookError::MissingOrInvalidTravelRuleMemo))?;
+
+    let memo_v1: Pubkey = MEMO_PROGRAM_V1.parse().unwrap();
+    let memo_v3: Pubkey = MEMO_PROGRAM_V3.parse().unwrap();
+    let is_memo_program = preceding_ix.program_id == memo_v1 || preceding_ix.program_id == memo_v3;
+
+    if !is_memo_program || !is_well_formed_travel_rule_memo(&preceding_ix.data) {
+        return Err(error!(ComplianceHookError::MissingOrInvalidTravelRuleMemo));
     }
 
     Ok(())
