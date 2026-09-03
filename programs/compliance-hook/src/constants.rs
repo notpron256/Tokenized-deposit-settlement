@@ -1,10 +1,6 @@
-use anchor_lang::prelude::*;
-
-#[constant]
-pub const COUNTER_SEED: &[u8] = b"counter";
-
-#[constant]
-pub const HELLO_WORLD_LAMPORTS: u64 = 1;
-
-#[constant]
-pub const MAX_COUNT: u64 = 10;
+/// Seed for the Transfer Hook interface's extra-account-metas PDA.
+/// Mirrors `spl_transfer_hook_interface`'s own (private) seed constant —
+/// duplicated here since it isn't exported, but the value is part of the
+/// public interface spec and must match exactly for Token-2022 to find the
+/// account it expects.
+pub const EXTRA_ACCOUNT_METAS_SEED: &[u8] = b"extra-account-metas";
