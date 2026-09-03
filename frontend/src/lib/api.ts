@@ -9,6 +9,8 @@ export interface Client {
   ownerAddress: string;
   status: string;
   kycReference: string;
+  registrationId: string;
+  legalAddress: string;
   cashBalanceCents: number;
   tokenizedCents: number;
   createdAt: string;
@@ -25,6 +27,22 @@ export interface DepositResponse {
   cashBalanceCents: number;
   tokenizedCents: number;
   onChainBalanceCents: number;
+}
+
+export interface TransferResponse {
+  signature: string;
+  senderCashBalanceCents: number;
+  senderTokenizedCents: number;
+  senderOnChainBalanceCents: number;
+  recipientCashBalanceCents: number;
+  recipientTokenizedCents: number;
+  recipientOnChainBalanceCents: number;
+}
+
+export class TransferApiError extends Error {
+  constructor(message: string, public sanctionsBadge?: string) {
+    super(message);
+  }
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -44,11 +62,13 @@ export async function onboardClient(
   name: string,
   riskRating: number,
   kycReference: string,
+  registrationId: string,
+  legalAddress: string,
 ): Promise<OnboardResponse> {
   const res = await fetch(`${API_BASE_URL}/clients`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, riskRating, kycReference }),
+    body: JSON.stringify({ name, riskRating, kycReference, registrationId, legalAddress }),
   });
   return handleResponse(res);
 }
@@ -60,4 +80,23 @@ export async function simulateDeposit(clientId: string, amountCents: number): Pr
     body: JSON.stringify({ clientId, amountCents }),
   });
   return handleResponse(res);
+}
+
+export async function transferTokens(
+  senderId: string,
+  recipientId: string,
+  amountCents: number,
+  reference: string,
+  remittance: string,
+): Promise<TransferResponse> {
+  const res = await fetch(`${API_BASE_URL}/transfers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ senderId, recipientId, amountCents, reference, remittance }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new TransferApiError(body.error ?? `Request failed: ${res.status}`, body.sanctionsBadge);
+  }
+  return res.json();
 }

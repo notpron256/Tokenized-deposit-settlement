@@ -70,14 +70,18 @@ Files: `backend/src/routes/depositFeed.ts`, `backend/src/flows/mintFlow.ts`, fro
 
 **Done test:** click "Simulate Deposit ($X)" for an onboarded client — UI shows ledger cash balance and on-chain token balance both increase and match. Then try it against a *not-yet-onboarded* client — UI shows a clean rejection, not a stuck/frozen mint attempt. **Verified**: deposited $2,500.50 for Sunrise Capital through the browser UI — ledger cash balance, ledger tokenized amount, and the app's own on-chain read-back all showed $2,500.50, then independently cross-checked with `spl-token account-info --address <ATA>` on the real validator, which also reported `2500.5`. Negative case (not-yet-onboarded/nonexistent client) tested directly via the API — since the UI's client picker only lists already-onboarded clients, there's no way to trigger this path by clicking through the form, so it was exercised with `curl` against a nonexistent client ID: clean `404` with no `deposit_events` row written (confirmed by checking the table), i.e. no stuck pending_chain row and no attempted mint.
 
-### Phase 5 — Transfer flow
+### Phase 5 — Transfer flow ✅
 Files: `backend/src/flows/transferFlow.ts`, frontend Transfer page (sender, recipient, amount, originator/beneficiary memo fields).
 
-**Done test**, four clicks:
-- (a) normal transfer between two onboarded clients succeeds, both balances update;
-- (b) a transfer that exceeds the sender's hourly velocity cap fails with the on-chain rejection reason shown in the UI;
-- (c) a transfer with the memo field left blank fails;
-- (d) a transfer involving the seeded synthetic sanctioned address fails, and the UI's rejection reason visibly shows a "SYNTHETIC / TEST DATA" badge on that entry — never rendered as if it were a real OFAC hit.
+**Done test**, four clicks — **Verified**, all through the browser UI:
+- (a) normal transfer between two onboarded clients succeeds, both balances update. Verified: $100.00 Sunrise Capital → Acme Corp Treasury; both sides' ledger tokenized amounts and on-chain read-backs matched.
+- (b) a transfer that exceeds the sender's hourly velocity cap fails with the on-chain rejection reason shown in the UI. Verified: $550,000.00 from Beta LLC Operating (High risk, $500,000/hr cap) → "Blocked: transfer would exceed the sender's hourly velocity limit."
+- (c) a transfer with the memo field left blank fails. Verified: blank reference/remittance → "Blocked: no memo instruction precedes this transfer (Token-2022's Required Memo extension) — a well-formed Travel Rule memo is required immediately before it." (This is Token-2022's own MemoTransfer account extension rejecting outright, a layer below compliance-hook's own structural memo check — see Move/transfer flow's two-layer memo note.)
+- (d) a transfer involving the seeded synthetic sanctioned address fails, and the UI's rejection reason visibly shows a "SYNTHETIC / TEST DATA" badge on that entry — never rendered as if it were a real OFAC hit. Verified: transfer to "Sanctioned Test Corp" (a normally-onboarded client whose owner address was separately registered in the on-chain SanctionsRegistry as a SyntheticTest entry via the new `seed-sanctions-registry.ts` script) → "Blocked: transfer involves a sanctioned party. Sanctioned Test Corp matches a sanctions registry entry — SYNTHETIC (TEST) — this is seeded test data for demoing the check, never a real OFAC hit."
+
+Also spot-checked a $15,000.00 transfer (above the $10,000 large-transaction threshold) to confirm the non-blocking flag doesn't block a legitimate transfer — succeeded normally.
+
+**Bug found and fixed while building this phase:** Phase 2's `create-mint.ts` never called `initialize_extra_account_meta_list` for the real production mint — it only pointed the mint at the hook program (`createInitializeTransferHookInstruction`), never created the hook program's own extra-account-meta-list PDA that Token-2022 needs to resolve the hook's extra accounts. Every transfer against the real mint failed with "An account required by the instruction is missing." Invisible to Phase 2's own done-test (`spl-token display` only inspects the mint's own extension config, not the separate PDA under the hook program), so it went uncaught until this phase's first real transfer attempt. Fixed by adding an idempotent `ensureExtraAccountMetaList` step to `create-mint.ts` and re-running `npm run setup:mint` to backfill it for the existing mint.
 
 ### Phase 6 — Off-chain indexer
 File: `backend/src/indexer.ts` (subscribes to program logs, writes `compliance_flags`), frontend Compliance page (flag list, plus a registry-entries view that renders each sanctions entry's `source` tag as a "REAL (OFAC SDN)" or "SYNTHETIC (TEST)" badge — the badge comes from the on-chain `source` field, not a hand-maintained UI list).

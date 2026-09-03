@@ -158,6 +158,10 @@
   border: 1px solid #bbf7d0;
 }
 
+.table-scroll {
+  overflow-x: auto;
+}
+
 .clients-table {
   width: 100%;
   border-collapse: collapse;
@@ -176,7 +180,7 @@
 }
 
 .ata-cell {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0.4rem;
 }

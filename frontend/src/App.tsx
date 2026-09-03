@@ -2,6 +2,7 @@ import { useState } from "react";
 import "./App.css";
 import Onboarding from "./pages/Onboarding";
 import Fund from "./pages/Fund";
+import Transfer from "./pages/Transfer";
 
 const TABS = [
   "Onboarding",
@@ -50,6 +51,8 @@ function App() {
           <Onboarding />
         ) : activeTab === "Fund" ? (
           <Fund />
+        ) : activeTab === "Transfer" ? (
+          <Transfer />
         ) : (
           <>
             <h2>{activeTab}</h2>
