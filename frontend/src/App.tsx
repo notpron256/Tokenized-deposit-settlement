@@ -6,7 +6,7 @@ import Transfer from "./pages/Transfer";
 
 const TABS = [
   "Onboarding",
-  "Fund",
+  "Deposit",
   "Transfer",
   "Redeem",
   "Compliance",
@@ -17,7 +17,7 @@ type Tab = (typeof TABS)[number];
 
 const PLACEHOLDER_PHASE: Record<Tab, string> = {
   Onboarding: "Phase 3",
-  Fund: "Phase 4",
+  Deposit: "Phase 4",
   Transfer: "Phase 5",
   Redeem: "Phase 8",
   Compliance: "Phase 6 / 6.5",
@@ -49,7 +49,7 @@ function App() {
       <main className="tab-content">
         {activeTab === "Onboarding" ? (
           <Onboarding />
-        ) : activeTab === "Fund" ? (
+        ) : activeTab === "Deposit" ? (
           <Fund />
         ) : activeTab === "Transfer" ? (
           <Transfer />

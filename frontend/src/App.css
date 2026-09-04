@@ -138,6 +138,61 @@
   max-width: 640px;
 }
 
+.transfer-notes {
+  font-size: 0.78rem;
+  color: #6b7280;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  margin: 0 0 1.25rem;
+  max-width: 640px;
+}
+
+.transfer-notes summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #374151;
+  list-style: none;
+}
+
+.transfer-notes summary::-webkit-details-marker {
+  display: none;
+}
+
+.transfer-notes summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 1em;
+  transition: transform 0.15s ease;
+}
+
+.transfer-notes[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.transfer-notes-body {
+  margin-top: 0.7rem;
+}
+
+.transfer-notes-body h4 {
+  margin: 0.9rem 0 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #4b5563;
+}
+
+.transfer-notes-body h4:first-child {
+  margin-top: 0;
+}
+
+.transfer-notes-body p {
+  margin: 0;
+  line-height: 1.5;
+}
+
 .status-message {
   padding: 0.6rem 0.8rem;
   border-radius: 6px;

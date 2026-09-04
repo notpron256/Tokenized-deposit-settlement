@@ -165,16 +165,29 @@ export default function Transfer() {
         </div>
       </form>
 
-      <p className="kyc-disclaimer">
-        Every transfer runs through the Transfer Hook's four on-chain checks (spec-001.md Move/transfer flow):
-        velocity limit, Travel Rule memo, sanctions re-screen, and a non-blocking large-transaction flag for amounts
-        of $10,000 or more. The memo's originator "50K" and beneficiary "59" fields are filled in automatically from
-        the selected sender/recipient — each carrying a reference ID plus a SHA-256 hash of that client's identity
-        data (computed fresh at transfer time), not their real name/registration ID/address in cleartext. The
-        reference proves linkage to a real onboarding record; the hash proves that record's content is unaltered
-        since — real data stays in Postgres, resolvable only through this application's own compliance views, never
-        posted on-chain (spec-001.md, Move/transfer flow and Areas of concern).
-      </p>
+      <details className="transfer-notes">
+        <summary>How this transfer is checked and protected</summary>
+        <div className="transfer-notes-body">
+          <h4>Controls</h4>
+          <p>
+            Every transfer runs through the Transfer Hook's four on-chain checks (spec-001.md Move/transfer flow):{" "}
+            <strong>velocity limit</strong>, <strong>Travel Rule memo</strong>, <strong>sanctions re-screen</strong>,
+            and a non-blocking <strong>large-transaction flag</strong> for amounts of $10,000 or more.
+          </p>
+          <h4>Travel Rule</h4>
+          <p>
+            The memo's originator "50K" and beneficiary "59" fields are filled in automatically from the selected
+            sender/recipient — never their real name, registration ID, or address in cleartext.
+          </p>
+          <h4>Data protection</h4>
+          <p>
+            Each field carries a reference ID plus a SHA-256 hash of that client's identity data, computed fresh at
+            transfer time. The reference proves linkage to a real onboarding record; the hash proves that record's
+            content is unaltered since. Real data stays in Postgres, resolvable only through this application's own
+            compliance views, never posted on-chain (spec-001.md, Move/transfer flow and Areas of concern).
+          </p>
+        </div>
+      </details>
 
       {error && (
         <p className="status-message status-error">
