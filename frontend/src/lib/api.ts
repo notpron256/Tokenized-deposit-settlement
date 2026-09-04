@@ -50,6 +50,36 @@ export class TransferApiError extends Error {
   }
 }
 
+export interface TransferListItem {
+  id: string;
+  senderName: string;
+  recipientName: string;
+  amountCents: number;
+  status: string;
+  txSignature: string | null;
+  createdAt: string;
+}
+
+export interface TransferPartyEvidence {
+  clientId: string;
+  found: boolean;
+  name?: string;
+  registrationId?: string;
+  legalAddress?: string;
+  onChainHash: string;
+  recomputedHash?: string;
+  match?: boolean;
+}
+
+export interface TransferEvidence {
+  signature: string;
+  slot: number;
+  blockTime: number | null;
+  memo: { raw: string; reference: string; remittance: string };
+  ordering: TransferPartyEvidence;
+  beneficiary: TransferPartyEvidence;
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -104,4 +134,14 @@ export async function transferTokens(
     throw new TransferApiError(body.error ?? `Request failed: ${res.status}`, body.sanctionsBadge);
   }
   return res.json();
+}
+
+export async function listTransferEvidence(): Promise<TransferListItem[]> {
+  const res = await fetch(`${API_BASE_URL}/transfers`);
+  return handleResponse(res);
+}
+
+export async function getTransferEvidence(signature: string): Promise<TransferEvidence> {
+  const res = await fetch(`${API_BASE_URL}/transfers/${encodeURIComponent(signature)}/evidence`);
+  return handleResponse(res);
 }

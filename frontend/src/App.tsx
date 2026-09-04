@@ -3,11 +3,13 @@ import "./App.css";
 import Onboarding from "./pages/Onboarding";
 import Fund from "./pages/Fund";
 import Transfer from "./pages/Transfer";
+import Evidence from "./pages/Evidence";
 
 const TABS = [
   "Onboarding",
   "Deposit",
   "Transfer",
+  "Evidence",
   "Redeem",
   "Compliance",
   "Reconciliation",
@@ -19,6 +21,7 @@ const PLACEHOLDER_PHASE: Record<Tab, string> = {
   Onboarding: "Phase 3",
   Deposit: "Phase 4",
   Transfer: "Phase 5",
+  Evidence: "Phase 5 (Transaction Evidence)",
   Redeem: "Phase 8",
   Compliance: "Phase 6 / 6.5",
   Reconciliation: "Phase 9",
@@ -53,6 +56,8 @@ function App() {
           <Fund />
         ) : activeTab === "Transfer" ? (
           <Transfer />
+        ) : activeTab === "Evidence" ? (
+          <Evidence />
         ) : (
           <>
             <h2>{activeTab}</h2>
