@@ -213,6 +213,35 @@
   border: 1px solid #bbf7d0;
 }
 
+.status-warning {
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.status-pending {
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.status-pending-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2563eb;
+  animation: status-pending-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes status-pending-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.7); }
+}
+
 .table-scroll {
   overflow-x: auto;
 }

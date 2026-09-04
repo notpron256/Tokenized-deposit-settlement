@@ -5,22 +5,27 @@
  * large-transaction flag. The sender's own custodied key signs (spec-001.md
  * client wallet model); bank-ops is not involved in ordinary transfers.
  *
- * No separate event/status table for transfers (unlike Fund's
- * deposit_events) — plan-001.md's Phase 5 file list doesn't specify one, so
- * this only updates ledger_balances, and only after on-chain confirmation.
- * A transfer moves value between two clients without changing the bank's
- * aggregate liability, so both cash_balance_cents and tokenized_cents move
- * from sender to recipient in lockstep with the on-chain balances — keeping
- * each client's ledger row in sync with what Phase 9's reconciliation will
- * later check it against.
+ * Ledger-first, like Fund's deposit_events: a transfer_events row is
+ * written as `pending_chain` before the on-chain transfer is attempted
+ * (reversing Phase 5's original "no event table" decision — see
+ * spec-001.md's Areas of concern for why). Settlement-finality gating
+ * (spec-001.md, Technical approach): the transaction is only ever
+ * explicitly confirmed at Solana's "confirmed" commitment first —
+ * transfer_events moves to `confirmed`, an intermediate status, not
+ * terminal. Only once the transaction separately reaches Solana's
+ * "finalized" commitment does the row move to `settled` and
+ * ledger_balances actually change on both sides. A `confirmed` row that
+ * never reaches `settled` is exactly the kind of anomaly Phase 9
+ * reconciliation should surface.
  */
-import crypto from "node:crypto";
 import { Connection, Keypair, PublicKey, SendTransactionError } from "@solana/web3.js";
 import { TOKEN_2022_PROGRAM_ID, createTransferCheckedWithTransferHookInstruction, getAccount } from "@solana/spl-token";
 import { Transaction, TransactionInstruction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { pool } from "../db/pool.js";
 import { DECIMALS } from "../solana/authorities.js";
 import { readSanctionsRegistry, SANCTIONS_SOURCE_LABELS } from "../solana/sanctions.js";
+import { identityHash } from "../solana/identityCommitment.js";
+import { waitForFinalized } from "../solana/finality.js";
 
 const MEMO_PROGRAM_V3 = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
@@ -59,6 +64,8 @@ async function loadClient(clientId: string): Promise<ClientRow> {
     throw new TransferError(`No client with id ${clientId}`, 404);
   }
   if (rows[0].status !== "active") {
+    // Also excludes a client still sitting at 'confirmed' (onboarded
+    // on-chain but not yet finalized) — not just 'suspended'.
     throw new TransferError(`Client "${rows[0].name}" is not active (status: ${rows[0].status})`, 400);
   }
   return rows[0];
@@ -68,59 +75,24 @@ function memoInstruction(text: string): TransactionInstruction {
   return new TransactionInstruction({ programId: MEMO_PROGRAM_V3, keys: [], data: Buffer.from(text, "utf-8") });
 }
 
-/**
- * Canonical, unambiguous byte serialization of a client's Travel Rule
- * identity fields — name, registration ID, legal address, in this fixed
- * order — for hashing (identityHash below). Each field is length-prefixed
- * (its UTF-8 byte length, decimal, then ":", then the field's own UTF-8
- * bytes) rather than joined with a plain separator character. A plain
- * separator would make the encoding ambiguous whenever a field's own
- * content happens to contain it: name="A|B", registrationId="C" would
- * hash identically to name="A", registrationId="B|C" under naive
- * "|"-joining. Length-prefixing removes that ambiguity regardless of
- * field content — which matters here specifically because this exact byte
- * sequence is what gets committed to on-chain; anyone re-deriving it
- * independently from a Postgres row must land on byte-for-byte the same
- * input to get the same hash back out.
- */
-function canonicalIdentityBytes(client: ClientRow): Buffer {
-  const fields = [client.name, client.registration_id, client.legal_address];
-  return Buffer.concat(
-    fields.map((field) => {
-      const bytes = Buffer.from(field, "utf-8");
-      return Buffer.concat([Buffer.from(`${bytes.length}:`, "utf-8"), bytes]);
-    }),
-  );
-}
-
-/**
- * SHA-256 of canonicalIdentityBytes, as a lowercase hex digest — a
- * cryptographic commitment to this client's identity data *as it exists
- * right now* in Postgres, computed fresh at transfer time (never cached or
- * stored), so it reflects the record at the moment of transfer. Posted
- * on-chain alongside the reference ID (partyField) so anyone with database
- * access can later recompute this same hash from the current record and
- * compare it against what's immutably on-chain: a match proves the record
- * is unchanged since this transfer; a mismatch proves it was altered
- * afterward. This is a distinct guarantee from the reference ID alone —
- * the ID only proves *linkage* to some record, not that the record's
- * content is what it was at transfer time; the hash is what makes that
- * second claim checkable.
- */
-function identityHash(client: ClientRow): string {
-  return crypto.createHash("sha256").update(canonicalIdentityBytes(client)).digest("hex");
-}
-
 /** Builds a :50K:/:59: party field's content: `<clientId>:<identityHash>`.
+ * identityHash (backend/src/solana/identityCommitment.ts) is a SHA-256
+ * commitment to this client's identity data *as it exists right now* in
+ * Postgres, computed fresh at transfer time (never cached or stored), so
+ * it reflects the record at the moment of transfer. Posted on-chain
+ * alongside the reference ID so anyone with database access can later
+ * recompute this same hash from the current record and compare it against
+ * what's immutably on-chain: a match proves the record is unchanged since
+ * this transfer; a mismatch proves it was altered afterward. This is a
+ * distinct guarantee from the reference ID alone — the ID only proves
+ * *linkage* to some record, not that the record's content is what it was
+ * at transfer time; the hash is what makes that second claim checkable.
  * `clientId` is a reference pointing at the client's own onboarding record
  * (their Postgres primary key) — never their real legal name, registration
  * ID, or address in cleartext on a public, immutable ledger. That real
  * identifying data still lives in Postgres exactly as captured at
  * onboarding, visible only through the application's own compliance-facing
- * views (e.g. the Onboarding page's client table). `identityHash` commits
- * to that record's content at this exact moment, so the two together prove
- * both linkage (this transfer really does point at a specific captured
- * record) and integrity (that record hasn't silently changed since).
+ * views (e.g. the Onboarding page's client table).
  *
  * This reference-plus-hash design is the industry-standard pattern for
  * crypto Travel Rule compliance (TRISA, Notabene, the Travel Rule Protocol
@@ -223,10 +195,19 @@ export async function executeTransfer(
   }
   tx.add(transferIx);
 
+  const { rows: eventRows } = await pool.query(
+    `INSERT INTO transfer_events (sender_client_id, recipient_client_id, amount_cents, status)
+     VALUES ($1, $2, $3, 'pending_chain') RETURNING id`,
+    [senderId, recipientId, amountCents],
+  );
+  const transferEventId: string = eventRows[0].id;
+
   let signature: string;
   try {
-    signature = await sendAndConfirmTransaction(connection, tx, [payer, senderKeypair]);
+    signature = await sendAndConfirmTransaction(connection, tx, [payer, senderKeypair], { commitment: "confirmed" });
   } catch (err) {
+    await pool.query(`UPDATE transfer_events SET status = 'failed' WHERE id = $1`, [transferEventId]);
+
     const logs = err instanceof SendTransactionError ? err.logs ?? [] : [];
     const joined = logs.join("\n");
     const codeMatch = joined.match(/Error Code: (\w+)/);
@@ -248,6 +229,31 @@ export async function executeTransfer(
     throw new TransferError(friendlyRejectionReason(errorCode, logs, rawMessage), 422, sanctionsBadge);
   }
 
+  // Solana-confirmed, but not yet irreversible — record this intermediate
+  // state and the signature now, distinct from the terminal 'settled'
+  // state below.
+  await pool.query(`UPDATE transfer_events SET status = 'confirmed', tx_signature = $1 WHERE id = $2`, [
+    signature,
+    transferEventId,
+  ]);
+
+  try {
+    await waitForFinalized(connection, signature, tx);
+  } catch (err) {
+    // Row stays at 'confirmed' — the transfer really did happen on-chain,
+    // so this isn't 'failed'; it's just not yet provably irreversible.
+    // Never update ledger_balances for a transfer that hasn't reached
+    // this point.
+    throw new TransferError(
+      `Transfer confirmed on-chain (tx ${signature}) but did not reach finalized commitment: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      503,
+    );
+  }
+
+  // Safe to read at "confirmed" here — finalization has already happened
+  // by this point, so a "confirmed" read reflects the finalized state too.
   const [senderAccount, recipientAccount] = await Promise.all([
     getAccount(connection, sourceAta, "confirmed", TOKEN_2022_PROGRAM_ID),
     getAccount(connection, destAta, "confirmed", TOKEN_2022_PROGRAM_ID),
@@ -256,6 +262,7 @@ export async function executeTransfer(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query(`UPDATE transfer_events SET status = 'settled' WHERE id = $1`, [transferEventId]);
     const { rows: senderRows } = await client.query(
       `UPDATE ledger_balances
        SET cash_balance_cents = cash_balance_cents - $1, tokenized_cents = tokenized_cents - $1, updated_at = now()

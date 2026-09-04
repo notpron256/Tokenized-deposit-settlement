@@ -15,6 +15,19 @@ CREATE TABLE IF NOT EXISTS clients (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Settlement-finality gating (spec-001.md, Technical approach: "settled" vs
+-- "finalized"): a client isn't trustworthy as 'active' until the onboarding
+-- transaction reaches Solana's own "finalized" commitment, not merely
+-- "confirmed" — before that, a confirmed-but-not-yet-finalized transaction
+-- could in principle still be dropped. 'confirmed' is the new intermediate
+-- value a client sits at between the on-chain transaction confirming and
+-- finalizing; only 'active' means finalized. The column's implicit
+-- DEFAULT 'active' from CREATE TABLE above is removed so the application
+-- must always state this explicitly, never fall into it by omission.
+ALTER TABLE clients DROP CONSTRAINT IF EXISTS clients_status_check;
+ALTER TABLE clients ADD CONSTRAINT clients_status_check CHECK (status IN ('confirmed', 'active', 'suspended'));
+ALTER TABLE clients ALTER COLUMN status DROP DEFAULT;
+
 -- KYC reference: a free-text case/ticket ID the operator supplies, recording
 -- where real KYC/risk-rating approval is claimed to have happened out-of-band.
 -- Not verified against any real system — spec-001.md Areas of concern names
@@ -61,7 +74,10 @@ CREATE TABLE IF NOT EXISTS ledger_balances (
 
 -- Phase 4's simulated deposit event feed. `status` tracks the cross-system
 -- atomicity gap named in spec-001.md's Areas of concern (plan-001.md
--- decision #5): pending_chain -> confirmed/failed, ledger write first.
+-- decision #5): pending_chain -> confirmed -> settled/failed, ledger write
+-- first. 'confirmed' (Solana-confirmed, not yet finalized) is an
+-- intermediate stage now, not terminal — see the settled-vs-finalized
+-- migration below.
 CREATE TABLE IF NOT EXISTS deposit_events (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     client_id       UUID NOT NULL REFERENCES clients(id),
@@ -71,7 +87,10 @@ CREATE TABLE IF NOT EXISTS deposit_events (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Phase 8's redemption flow. Same pending_chain -> confirmed/failed pattern.
+-- Phase 8's redemption flow. Same pending_chain -> confirmed -> settled/failed
+-- pattern as deposit_events (see the settled-vs-finalized migration below);
+-- schema is ready ahead of Phase 8's own build so the same gap doesn't need
+-- retrofitting later.
 CREATE TABLE IF NOT EXISTS redemption_requests (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     client_id       UUID NOT NULL REFERENCES clients(id),
@@ -79,6 +98,43 @@ CREATE TABLE IF NOT EXISTS redemption_requests (
     status          TEXT NOT NULL DEFAULT 'pending_chain' CHECK (status IN ('pending_chain', 'confirmed', 'failed', 'refused_sanctioned')),
     tx_signature    TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Settlement-finality gating, added after deposit_events/redemption_requests
+-- already existed (same backfill-migration pattern as kyc_reference etc.
+-- above): both tables' 'confirmed' status meant "done, terminal" until now.
+-- It's repurposed as an intermediate stage — Solana-confirmed, but not yet
+-- finalized — and 'settled' is added as the new terminal success value.
+-- "Settled" (the business/banking term: value has irrevocably moved) is
+-- kept conceptually distinct from Solana's own technical "finalized"
+-- commitment level — see spec-001.md's Technical approach for the full
+-- distinction. Both CHECK constraints are dropped and recreated rather
+-- than altered in place, since Postgres has no ADD-VALUE-IF-NOT-PRESENT
+-- form for a CHECK constraint; safe to re-run.
+ALTER TABLE deposit_events DROP CONSTRAINT IF EXISTS deposit_events_status_check;
+ALTER TABLE deposit_events ADD CONSTRAINT deposit_events_status_check
+    CHECK (status IN ('pending_chain', 'confirmed', 'settled', 'failed'));
+
+ALTER TABLE redemption_requests DROP CONSTRAINT IF EXISTS redemption_requests_status_check;
+ALTER TABLE redemption_requests ADD CONSTRAINT redemption_requests_status_check
+    CHECK (status IN ('pending_chain', 'confirmed', 'settled', 'failed', 'refused_sanctioned'));
+
+-- Phase 5's transfer flow never had its own event/status table (plan-001.md
+-- originally decided against one — transfers only updated ledger_balances
+-- directly). Reversed here: transfers need the same pending_chain ->
+-- confirmed -> settled/failed settlement-finality tracking as deposits, so
+-- there has to be a row for it to live on. Also gives a durable,
+-- restart-proof record of every transfer attempt (including compliance
+-- rejections, which land here as 'failed') independent of Solana's own
+-- transaction-history retention on a local validator.
+CREATE TABLE IF NOT EXISTS transfer_events (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sender_client_id      UUID NOT NULL REFERENCES clients(id),
+    recipient_client_id   UUID NOT NULL REFERENCES clients(id),
+    amount_cents          BIGINT NOT NULL,
+    status                TEXT NOT NULL DEFAULT 'pending_chain' CHECK (status IN ('pending_chain', 'confirmed', 'settled', 'failed')),
+    tx_signature          TEXT,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Phase 9's reconciliation job. client_id is nullable for an aggregate-level

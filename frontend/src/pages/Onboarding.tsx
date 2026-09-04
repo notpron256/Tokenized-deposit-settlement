@@ -40,6 +40,7 @@ export default function Onboarding() {
     riskLabel: string;
     ataAddress: string;
     kycReference: string;
+    warning?: string;
   } | null>(null);
 
   async function refreshClients() {
@@ -83,6 +84,7 @@ export default function Onboarding() {
         riskLabel: result.riskLabel,
         ataAddress: result.ataAddress,
         kycReference: result.kycReference,
+        warning: result.warning,
       });
       setName("");
       setRiskRating(0);
@@ -188,12 +190,26 @@ export default function Onboarding() {
         only through this application's own compliance views (spec-001.md, Move/transfer flow and Areas of concern).
       </p>
 
+      {submitting && (
+        <p className="status-message status-pending">
+          <span className="status-pending-dot" aria-hidden="true" />
+          Waiting for finalized settlement — this typically takes ~15-20s, reflecting Solana's actual finality
+          guarantees. The client won't be marked active until the chain has genuinely reached the point where this
+          transaction can't be dropped, not merely confirmed.
+        </p>
+      )}
       {error && <p className="status-message status-error">{error}</p>}
       {lastResult && (
-        <p className="status-message status-success">
+        <p className={lastResult.warning ? "status-message status-warning" : "status-message status-success"}>
           Onboarded "{lastResult.name}" — status: {lastResult.status}, risk: {lastResult.riskLabel}, KYC ref:{" "}
           {lastResult.kycReference}, ATA: <span className="mono-cell">{lastResult.ataAddress}</span>{" "}
           <CopyButton value={lastResult.ataAddress} />
+          {lastResult.warning && (
+            <>
+              <br />
+              <strong>Not yet active:</strong> {lastResult.warning}
+            </>
+          )}
         </p>
       )}
 

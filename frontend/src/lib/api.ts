@@ -19,6 +19,11 @@ export interface Client {
 export interface OnboardResponse extends Client {
   velocityAccount: string;
   signature: string;
+  // Present only when onboarding confirmed on-chain but hadn't reached
+  // Solana's "finalized" commitment before this response was sent — see
+  // spec-001.md's Technical approach ("settled" vs "finalized"). The
+  // client is still created (status: "confirmed", not yet "active").
+  warning?: string;
 }
 
 export interface DepositResponse {

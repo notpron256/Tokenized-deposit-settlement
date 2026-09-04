@@ -189,6 +189,14 @@ export default function Transfer() {
         </div>
       </details>
 
+      {submitting && (
+        <p className="status-message status-pending">
+          <span className="status-pending-dot" aria-hidden="true" />
+          Waiting for finalized settlement — this typically takes ~15-20s, reflecting Solana's actual finality
+          guarantees. Balances won't move until the chain has genuinely reached the point where this transaction
+          can't be dropped, not merely confirmed.
+        </p>
+      )}
       {error && (
         <p className="status-message status-error">
           {error}

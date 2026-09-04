@@ -7,6 +7,11 @@
  * it's done here at onboarding, not at mint creation), and initializes
  * their velocity-tracking account on the compliance-hook program with
  * their assigned risk rating.
+ *
+ * Only sends at Solana's "confirmed" commitment — the caller
+ * (routes/onboarding.ts) is responsible for waiting for "finalized" before
+ * treating the client as settled (spec-001.md, Technical approach); this
+ * function's job stops at getting a confirmed signature.
  */
 import crypto from "node:crypto";
 import {
@@ -43,6 +48,7 @@ export interface OnboardResult {
   ataAddress: PublicKey;
   velocityAccount: PublicKey;
   signature: string;
+  tx: Transaction;
 }
 
 export async function onboardClientOnChain(
@@ -100,7 +106,9 @@ export async function onboardClientOnChain(
     initVelocityIx,
   );
 
-  const signature = await sendAndConfirmTransaction(connection, tx, [payer, bankOps, client]);
+  const signature = await sendAndConfirmTransaction(connection, tx, [payer, bankOps, client], {
+    commitment: "confirmed",
+  });
 
-  return { client, ataAddress, velocityAccount, signature };
+  return { client, ataAddress, velocityAccount, signature, tx };
 }

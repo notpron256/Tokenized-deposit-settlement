@@ -104,6 +104,14 @@ export default function Fund() {
         "Simulate Deposit" is the synthetic event, not a direct edit of the ledger or a direct mint call.
       </p>
 
+      {submitting && (
+        <p className="status-message status-pending">
+          <span className="status-pending-dot" aria-hidden="true" />
+          Waiting for finalized settlement — this typically takes ~15-20s, reflecting Solana's actual finality
+          guarantees. The ledger won't be updated until the chain has genuinely reached the point where this
+          transaction can't be dropped, not merely confirmed.
+        </p>
+      )}
       {error && <p className="status-message status-error">{error}</p>}
       {lastResult && (
         <p className="status-message status-success">

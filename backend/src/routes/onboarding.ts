@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { getConnection, loadLocalKeypair, loadOrCreateBankOpsKeypair, requireMintAddress } from "../solana/authorities.js";
 import { onboardClientOnChain } from "../solana/onboarding.js";
+import { waitForFinalized } from "../solana/finality.js";
 import { pool } from "../db/pool.js";
 
 export const onboardingRouter = Router();
@@ -51,18 +52,35 @@ onboardingRouter.post("/clients", async (req, res) => {
 
     const result = await onboardClientOnChain(connection, payer, bankOps, mint, riskRating);
 
+    // Settlement-finality gating (spec-001.md, Technical approach): the
+    // onboarding transaction is only Solana-"confirmed" at this point, not
+    // yet finalized. A client only becomes 'active' — the status every
+    // other flow trusts to mean "this client may transact" — once that
+    // separately resolves. If it doesn't, the row is still created (so a
+    // real on-chain onboarding is never silently lost) but stays at
+    // 'confirmed', which Fund/Transfer both already treat as not usable.
+    let clientStatus: "active" | "confirmed" = "confirmed";
+    let finalizeError: string | undefined;
+    try {
+      await waitForFinalized(connection, result.signature, result.tx);
+      clientStatus = "active";
+    } catch (err) {
+      finalizeError = err instanceof Error ? err.message : String(err);
+    }
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
       const { rows } = await client.query(
-        `INSERT INTO clients (name, risk_rating, ata_address, owner_address, kyc_reference, registration_id, legal_address)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO clients (name, risk_rating, ata_address, owner_address, status, kyc_reference, registration_id, legal_address)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id, name, risk_rating, ata_address, owner_address, status, kyc_reference, registration_id, legal_address, created_at`,
         [
           name.trim(),
           riskRating,
           result.ataAddress.toBase58(),
           result.client.publicKey.toBase58(),
+          clientStatus,
           kycReference.trim(),
           registrationId.trim(),
           legalAddress.trim(),
@@ -79,7 +97,7 @@ onboardingRouter.post("/clients", async (req, res) => {
       );
       await client.query("COMMIT");
 
-      res.status(201).json({
+      const body = {
         id: row.id,
         name: row.name,
         riskRating: row.risk_rating,
@@ -92,7 +110,20 @@ onboardingRouter.post("/clients", async (req, res) => {
         legalAddress: row.legal_address,
         velocityAccount: result.velocityAccount.toBase58(),
         signature: result.signature,
-      });
+      };
+
+      if (clientStatus === "active") {
+        res.status(201).json(body);
+      } else {
+        // 202, not an error status: the client genuinely was created and
+        // onboarded on-chain — it just isn't finalized yet, so the
+        // response carries the full body (unlike a thrown error, which
+        // would lose it) plus a `warning` the frontend renders distinctly.
+        res.status(202).json({
+          ...body,
+          warning: `Onboarded on-chain (tx ${result.signature}) but did not reach finalized commitment before responding: ${finalizeError}. Client created with status 'confirmed', not yet 'active' — Fund/Transfer will refuse it until finalization completes.`,
+        });
+      }
     } catch (dbErr) {
       await client.query("ROLLBACK");
       throw dbErr;
