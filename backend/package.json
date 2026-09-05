@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "setup:mint": "tsx scripts/create-mint.ts",
-    "db:migrate": "tsx scripts/migrate.ts"
+    "db:migrate": "tsx scripts/migrate.ts",
+    "indexer": "tsx scripts/indexer.ts"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.15",

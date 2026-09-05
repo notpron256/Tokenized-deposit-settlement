@@ -137,6 +137,33 @@ CREATE TABLE IF NOT EXISTS transfer_events (
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Phase 6's off-chain indexer (backend/scripts/indexer.ts): every transfer
+-- that actually reached the chain, reconstructed purely from on-chain data
+-- (transaction logs, memo content, token balance deltas) -- never by
+-- reading transfer_events/ledger_balances. Deliberately has NO foreign key
+-- back to clients: joins for display happen at read time only, so this
+-- table's own correctness never depends on the backend's other tables
+-- (spec-001.md, Technical approach). Rejected transfers (velocity/memo/
+-- sanctions) never appear here -- they never reach the chain at all (see
+-- spec-001.md for why that's a documented design choice, not a gap).
+CREATE TABLE IF NOT EXISTS indexed_transfers (
+    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tx_signature                TEXT NOT NULL UNIQUE,
+    slot                        BIGINT NOT NULL,
+    block_time                  TIMESTAMPTZ,
+    sender_owner                TEXT NOT NULL,
+    recipient_owner             TEXT NOT NULL,
+    amount_cents                BIGINT NOT NULL,
+    memo_reference              TEXT,
+    memo_remittance             TEXT,
+    ordering_client_id          TEXT,
+    ordering_identity_hash      TEXT,
+    beneficiary_client_id       TEXT,
+    beneficiary_identity_hash   TEXT,
+    large_transaction_flag      BOOLEAN NOT NULL DEFAULT false,
+    indexed_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Phase 9's reconciliation job. client_id is nullable for an aggregate-level
 -- break (spec-001.md's two-invariant design: aggregate check + per-client check).
 CREATE TABLE IF NOT EXISTS reconciliation_breaks (
@@ -148,15 +175,12 @@ CREATE TABLE IF NOT EXISTS reconciliation_breaks (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Phase 6's off-chain indexer output: large-transaction flags (and any
--- other blocked-transfer reasons) read from Transfer Hook program logs.
-CREATE TABLE IF NOT EXISTS compliance_flags (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tx_signature        TEXT NOT NULL,
-    flag_type           TEXT NOT NULL,
-    source_owner        TEXT,
-    destination_owner   TEXT,
-    amount_cents        BIGINT,
-    details              JSONB,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- Phase 6's off-chain indexer output: superseded by the
+-- indexed_transfers.large_transaction_flag boolean column above (a
+-- separate compliance_flags table was drafted early in Phase 6's design
+-- but never matched what got built — a boolean was sufficient since
+-- large-transaction is currently the only flag type the hook emits, and a
+-- second table would only duplicate what's already on indexed_transfers).
+-- This table was dropped from both the local and devnet databases when
+-- this comment was corrected; if a future flag type ever needs its own
+-- structured record, add it fresh rather than reviving this one.

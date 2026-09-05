@@ -15,11 +15,11 @@
  * transaction fresh from the validator, never from Postgres.
  */
 import { Router } from "express";
-import bs58 from "bs58";
 import { getConnection, networkLabel } from "../solana/authorities.js";
 import { pool } from "../db/pool.js";
-import { parseTravelRuleMemo, MEMO_PROGRAM_V1, MEMO_PROGRAM_V3 } from "../solana/travelRuleMemo.js";
+import { parseTravelRuleMemo } from "../solana/travelRuleMemo.js";
 import { identityHash } from "../solana/identityCommitment.js";
+import { extractMemoText } from "../solana/transferReconstruction.js";
 
 export const transferEvidenceRouter = Router();
 
@@ -50,31 +50,6 @@ transferEvidenceRouter.get("/transfers", async (_req, res) => {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
-
-/** Pulls the raw Memo instruction's bytes straight out of the transaction's
- * own compiled instructions — not from the program log's Rust-`{:?}`-
- * debug-formatted text, which escapes characters like `"` and `\` and
- * would need un-escaping to recover the exact original bytes. Reading the
- * instruction data directly has no such ambiguity. */
-function extractMemoText(tx: NonNullable<Awaited<ReturnType<ReturnType<typeof getConnection>["getTransaction"]>>>): string | null {
-  const message = tx.transaction.message as unknown as {
-    accountKeys?: { toBase58(): string }[];
-    getAccountKeys?: () => { staticAccountKeys: { toBase58(): string }[] };
-    compiledInstructions?: { programIdIndex: number; data: Uint8Array }[];
-    instructions?: { programIdIndex: number; data: string }[];
-  };
-  const keys = message.getAccountKeys ? message.getAccountKeys().staticAccountKeys : message.accountKeys ?? [];
-  const instructions = message.compiledInstructions ?? message.instructions ?? [];
-
-  for (const ix of instructions) {
-    const programId = keys[ix.programIdIndex]?.toBase58();
-    if (programId === MEMO_PROGRAM_V1 || programId === MEMO_PROGRAM_V3) {
-      const bytes = ix.data instanceof Uint8Array ? ix.data : bs58.decode(ix.data as unknown as string);
-      return Buffer.from(bytes).toString("utf-8");
-    }
-  }
-  return null;
-}
 
 transferEvidenceRouter.get("/transfers/:signature/evidence", async (req, res) => {
   const { signature } = req.params;
