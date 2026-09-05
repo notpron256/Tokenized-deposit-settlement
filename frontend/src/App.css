@@ -337,6 +337,41 @@
   margin-top: 2rem;
 }
 
+.activity-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.activity-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #374151;
+}
+
+.activity-filters select,
+.activity-filters input {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.activity-row-flagged {
+  background: #fef2f2;
+}
+
+.activity-pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
 .evidence-back {
   background: none;
   border: none;
@@ -443,4 +478,13 @@
 
 .evidence-retry:hover {
   background: #f3f4f6;
+}
+
+.evidence-retry:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.evidence-retry:disabled:hover {
+  background: #f9fafb;
 }

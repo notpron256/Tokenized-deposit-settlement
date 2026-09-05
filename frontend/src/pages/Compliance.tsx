@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   listComplianceFlags,
+  listActivity,
   getSanctionsRegistry,
   type ComplianceFlag,
+  type ActivityEntry,
   type SanctionsRegistryEntry,
 } from "../lib/api";
 
@@ -14,10 +16,20 @@ function shortAddress(address: string): string {
   return `${address.slice(0, 8)}…${address.slice(-6)}`;
 }
 
+const ACTIVITY_PAGE_SIZE = 25;
+
 export default function Compliance() {
   const [flags, setFlags] = useState<ComplianceFlag[]>([]);
   const [flagsLoading, setFlagsLoading] = useState(true);
   const [flagsError, setFlagsError] = useState<string | null>(null);
+
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [activityLoading, setActivityLoading] = useState(true);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [clientFilter, setClientFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [activityPage, setActivityPage] = useState(1);
 
   const [registryEntries, setRegistryEntries] = useState<SanctionsRegistryEntry[]>([]);
   const [registryNetwork, setRegistryNetwork] = useState<"local" | "devnet" | null>(null);
@@ -30,6 +42,11 @@ export default function Compliance() {
       .catch((err) => setFlagsError(err instanceof Error ? err.message : String(err)))
       .finally(() => setFlagsLoading(false));
 
+    listActivity()
+      .then(setActivity)
+      .catch((err) => setActivityError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setActivityLoading(false));
+
     getSanctionsRegistry()
       .then((res) => {
         setRegistryEntries(res.entries);
@@ -38,6 +55,49 @@ export default function Compliance() {
       .catch((err) => setRegistryError(err instanceof Error ? err.message : String(err)))
       .finally(() => setRegistryLoading(false));
   }, []);
+
+  const clientOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const entry of activity) {
+      if (entry.orderingName) names.add(entry.orderingName);
+      if (entry.beneficiaryName) names.add(entry.beneficiaryName);
+    }
+    return Array.from(names).sort();
+  }, [activity]);
+
+  const filteredActivity = useMemo(() => {
+    const from = fromDate ? new Date(fromDate) : null;
+    // toDate is a plain yyyy-mm-dd value from a date input; add a day so the
+    // filter reads as "through the end of this day", not midnight at its start.
+    const to = toDate ? new Date(new Date(toDate).getTime() + 24 * 60 * 60 * 1000) : null;
+
+    return activity.filter((entry) => {
+      if (clientFilter && entry.orderingName !== clientFilter && entry.beneficiaryName !== clientFilter) {
+        return false;
+      }
+      if (entry.blockTime && (from || to)) {
+        const when = new Date(entry.blockTime);
+        if (from && when < from) return false;
+        if (to && when > to) return false;
+      }
+      return true;
+    });
+  }, [activity, clientFilter, fromDate, toDate]);
+
+  // Pagination applies after filtering, over whatever the filters left —
+  // narrowing the set first, then paging what's left, not the other way
+  // around. Reset to page 1 whenever the filtered set changes so a filter
+  // change never leaves the view stranded on a now out-of-range page.
+  useEffect(() => {
+    setActivityPage(1);
+  }, [clientFilter, fromDate, toDate]);
+
+  const activityPageCount = Math.max(1, Math.ceil(filteredActivity.length / ACTIVITY_PAGE_SIZE));
+  const currentActivityPage = Math.min(activityPage, activityPageCount);
+  const pagedActivity = filteredActivity.slice(
+    (currentActivityPage - 1) * ACTIVITY_PAGE_SIZE,
+    currentActivityPage * ACTIVITY_PAGE_SIZE,
+  );
 
   return (
     <div className="compliance-page">
@@ -123,6 +183,122 @@ export default function Compliance() {
               </tbody>
             </table>
           </div>
+        )}
+      </section>
+
+      <section className="compliance-section">
+        <h3>Activity history</h3>
+        <p className="kyc-disclaimer">
+          Every settled transfer captured by the indexer — same source as the flag list above (
+          <span className="mono-cell">indexed_transfers</span>, never <span className="mono-cell">transfer_events</span>
+          ), just unfiltered. Flagged transfers are marked inline rather than requiring a separate view to notice.
+        </p>
+        {activityError && <p className="status-message status-error">{activityError}</p>}
+        {!activityLoading && activity.length > 0 && (
+          <div className="activity-filters">
+            <label>
+              Client
+              <select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}>
+                <option value="">All clients</option>
+                {clientOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              From
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+            </label>
+            <label>
+              To
+              <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+            </label>
+            {(clientFilter || fromDate || toDate) && (
+              <button
+                type="button"
+                className="evidence-retry"
+                onClick={() => {
+                  setClientFilter("");
+                  setFromDate("");
+                  setToDate("");
+                }}
+              >
+                Clear filters
+              </button>
+            )}
+            <span className="field-hint">
+              Showing {filteredActivity.length} of {activity.length}
+            </span>
+          </div>
+        )}
+        {activityLoading ? (
+          <p>Loading…</p>
+        ) : activity.length === 0 ? (
+          <p>No transfers indexed yet.</p>
+        ) : filteredActivity.length === 0 ? (
+          <p>No transfers match the current filters.</p>
+        ) : (
+          <>
+            <div className="table-scroll">
+              <table className="clients-table">
+                <thead>
+                  <tr>
+                    <th>Ordering</th>
+                    <th>Beneficiary</th>
+                    <th>Amount</th>
+                    <th>When</th>
+                    <th>Flagged</th>
+                    <th>Signature</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedActivity.map((entry) => (
+                    <tr key={entry.txSignature} className={entry.largeTransactionFlag ? "activity-row-flagged" : undefined}>
+                      <td>{entry.orderingName ?? <span className="mono-cell">{shortAddress(entry.senderOwner)}</span>}</td>
+                      <td>{entry.beneficiaryName ?? <span className="mono-cell">{shortAddress(entry.recipientOwner)}</span>}</td>
+                      <td>{formatCents(entry.amountCents)}</td>
+                      <td>
+                        {entry.blockTime ? new Date(entry.blockTime).toLocaleString() : <span className="field-hint">unknown</span>}
+                      </td>
+                      <td>
+                        {entry.largeTransactionFlag ? (
+                          <span className="source-badge source-real">LARGE</span>
+                        ) : (
+                          <span className="field-hint">—</span>
+                        )}
+                      </td>
+                      <td className="mono-cell">{shortAddress(entry.txSignature)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {activityPageCount > 1 && (
+              <div className="activity-pagination">
+                <button
+                  type="button"
+                  className="evidence-retry"
+                  disabled={currentActivityPage === 1}
+                  onClick={() => setActivityPage((p) => Math.max(1, p - 1))}
+                >
+                  ← Previous
+                </button>
+                <span className="field-hint">
+                  Page {currentActivityPage} of {activityPageCount}
+                </span>
+                <button
+                  type="button"
+                  className="evidence-retry"
+                  disabled={currentActivityPage === activityPageCount}
+                  onClick={() => setActivityPage((p) => Math.min(activityPageCount, p + 1))}
+                >
+                  Next →
+                </button>
+              </div>
+            )}
+          </>
         )}
       </section>
     </div>

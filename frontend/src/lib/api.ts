@@ -92,6 +92,10 @@ export interface ComplianceFlag {
   memoReference: string | null;
 }
 
+export interface ActivityEntry extends ComplianceFlag {
+  largeTransactionFlag: boolean;
+}
+
 export interface SanctionsRegistryEntry {
   address: string;
   source: number;
@@ -172,6 +176,11 @@ export async function getTransferEvidence(signature: string): Promise<TransferEv
 
 export async function listComplianceFlags(): Promise<ComplianceFlag[]> {
   const res = await fetch(`${API_BASE_URL}/compliance/flags`);
+  return handleResponse(res);
+}
+
+export async function listActivity(): Promise<ActivityEntry[]> {
+  const res = await fetch(`${API_BASE_URL}/compliance/activity`);
   return handleResponse(res);
 }
 
