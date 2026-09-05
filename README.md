@@ -22,8 +22,14 @@ This project deliberately runs against two independent networks, never mixed:
 ## Quick start (local validator)
 
 1. `solana-test-validator` running on `localhost:8899`.
-2. `docker compose up -d` (Postgres).
+2. `docker compose up -d` (Postgres, and the Phase 6 off-chain indexer — see below).
 3. `cd backend && npm install && npm run db:migrate && npm run setup:mint`.
 4. `cd backend && npm run dev` / `cd frontend && npm install && npm run dev`.
 
 `backend/keys/local/` holds the local bank-ops authority and mint address, generated on first run.
+
+## Off-chain indexer
+
+`docker compose up` also starts an `indexer` service (`backend/scripts/indexer.ts`), which independently reconstructs every transfer that reaches the chain — signature, both parties, amount, memo fields, large-transaction flag — purely from on-chain data, never by trusting the backend's own Postgres writes. It backfills on startup, then watches live. It reads the same `.env` as everything else, so it always follows whichever network (local/devnet) is currently active.
+
+**This only provides coverage while the container is actually running.** There is no restart policy on it and no supervisory process behind it — a crash or a dropped RPC subscription just means it silently stops indexing until someone notices and restarts it (`docker compose up -d indexer`). A missed transfer isn't lost forever (a later backfill picks it up from the chain's own history), but it won't show up on the Compliance page until then. This is a deliberate, named POC-scope limitation, not an assumed guarantee — see `spec-001.md`'s Areas of concern for the full reasoning and the real incident that surfaced it.

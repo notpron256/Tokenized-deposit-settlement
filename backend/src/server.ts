@@ -14,6 +14,7 @@ const { onboardingRouter } = await import("./routes/onboarding.js");
 const { depositFeedRouter } = await import("./routes/depositFeed.js");
 const { transferRouter } = await import("./routes/transfer.js");
 const { transferEvidenceRouter } = await import("./routes/transferEvidence.js");
+const { complianceRouter } = await import("./routes/compliance.js");
 
 const app = express();
 app.use(cors());
@@ -27,6 +28,7 @@ app.use(onboardingRouter);
 app.use(depositFeedRouter);
 app.use(transferRouter);
 app.use(transferEvidenceRouter);
+app.use(complianceRouter);
 
 const port = Number(process.env.PORT ?? 4000);
 app.listen(port, () => {

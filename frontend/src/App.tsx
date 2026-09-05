@@ -4,6 +4,7 @@ import Onboarding from "./pages/Onboarding";
 import Fund from "./pages/Fund";
 import Transfer from "./pages/Transfer";
 import Evidence from "./pages/Evidence";
+import Compliance from "./pages/Compliance";
 
 const TABS = [
   "Onboarding",
@@ -58,6 +59,8 @@ function App() {
           <Transfer />
         ) : activeTab === "Evidence" ? (
           <Evidence />
+        ) : activeTab === "Compliance" ? (
+          <Compliance />
         ) : (
           <>
             <h2>{activeTab}</h2>

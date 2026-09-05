@@ -81,6 +81,29 @@ export interface TransferEvidence {
   beneficiary: TransferPartyEvidence;
 }
 
+export interface ComplianceFlag {
+  txSignature: string;
+  blockTime: string | null;
+  amountCents: number;
+  senderOwner: string;
+  recipientOwner: string;
+  orderingName: string | null;
+  beneficiaryName: string | null;
+  memoReference: string | null;
+}
+
+export interface SanctionsRegistryEntry {
+  address: string;
+  source: number;
+  sourceLabel: string;
+  clientName: string | null;
+}
+
+export interface SanctionsRegistryResponse {
+  network: "local" | "devnet";
+  entries: SanctionsRegistryEntry[];
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -144,5 +167,15 @@ export async function listTransferEvidence(): Promise<TransferListItem[]> {
 
 export async function getTransferEvidence(signature: string): Promise<TransferEvidence> {
   const res = await fetch(`${API_BASE_URL}/transfers/${encodeURIComponent(signature)}/evidence`);
+  return handleResponse(res);
+}
+
+export async function listComplianceFlags(): Promise<ComplianceFlag[]> {
+  const res = await fetch(`${API_BASE_URL}/compliance/flags`);
+  return handleResponse(res);
+}
+
+export async function getSanctionsRegistry(): Promise<SanctionsRegistryResponse> {
+  const res = await fetch(`${API_BASE_URL}/compliance/registry`);
   return handleResponse(res);
 }

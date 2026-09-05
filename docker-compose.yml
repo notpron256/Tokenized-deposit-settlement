@@ -11,5 +11,37 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  # Phase 6's off-chain indexer (backend/scripts/indexer.ts), wired in so
+  # `docker compose up` starts it automatically instead of depending on
+  # someone remembering to leave a terminal open running `npm run indexer`.
+  #
+  # POC-scoped deliberately: no restart policy (a crashed indexer just
+  # stays down — see spec-001.md's Areas of concern and README.md for why
+  # that's a named limitation, not an oversight), no build step/Dockerfile
+  # (installs its deps fresh into a persisted volume on every start —
+  # slower than a cached image layer, but this stays a two-line service
+  # definition instead of a maintained Dockerfile, which is the right
+  # trade for a POC this size).
+  #
+  # network_mode: "service:postgres" makes this container share postgres's
+  # own network namespace, so DATABASE_URL's "localhost" (as written in
+  # the real .env, unmodified) resolves to the postgres container itself —
+  # the same .env used by every host-run script, so this always follows
+  # whichever network (local/devnet) is currently active without a second
+  # copy of SOLANA_RPC_URL/DATABASE_URL to keep in sync by hand.
+  indexer:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+      - backend_node_modules:/app/node_modules
+    env_file:
+      - .env
+    network_mode: "service:postgres"
+    depends_on:
+      - postgres
+    command: sh -c "npm install && npx tsx scripts/indexer.ts"
+
 volumes:
   pgdata:
+  backend_node_modules:

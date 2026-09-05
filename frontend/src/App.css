@@ -316,6 +316,27 @@
   color: #991b1b;
 }
 
+.source-badge {
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.source-real {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.source-synthetic {
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.compliance-section {
+  margin-top: 2rem;
+}
+
 .evidence-back {
   background: none;
   border: none;
