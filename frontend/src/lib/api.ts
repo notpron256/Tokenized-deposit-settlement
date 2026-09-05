@@ -73,6 +73,7 @@ export interface TransferPartyEvidence {
 
 export interface TransferEvidence {
   signature: string;
+  network: "local" | "devnet";
   slot: number;
   blockTime: number | null;
   memo: { raw: string; reference: string; remittance: string };

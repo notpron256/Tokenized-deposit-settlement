@@ -17,14 +17,16 @@
  * a custom program CPI into base Burn), which needs no mint extension.
  *
  * Authorities: per plan-001.md decision #4, mint/freeze/permanent-delegate
- * authority is a dedicated local "bank-ops" keypair (generated once, saved
- * gitignored to backend/keys/bank-ops.json, reused on later runs) — not
- * the developer's own default Solana CLI keypair, which here only pays
- * for and signs the mint account's own creation.
+ * authority is a dedicated "bank-ops" keypair (generated once per network,
+ * saved gitignored to backend/keys/<network>/bank-ops.json, reused on
+ * later runs) — not the developer's own default Solana CLI keypair, which
+ * here only pays for and signs the mint account's own creation.
  *
- * Idempotent: if backend/keys/mint-address.json already points at a real
- * mint, reuses it instead of creating a new one — Phase 3+ needs a single,
- * stable mint address to build against, not a fresh one every run.
+ * Idempotent per network: if backend/keys/<network>/mint-address.json
+ * already points at a real mint, reuses it instead of creating a new one
+ * — Phase 3+ needs a single, stable mint address to build against, not a
+ * fresh one every run. SOLANA_RPC_URL determines which network's keys
+ * directory this run reads/writes (see solana/authorities.ts).
  */
 import crypto from "node:crypto";
 import {
@@ -57,6 +59,7 @@ import {
   persistMintAddress,
   HOOK_PROGRAM_ID,
   DECIMALS,
+  networkLabel,
 } from "../src/solana/authorities.js";
 
 function anchorDiscriminator(instructionName: string): Buffer {
@@ -168,7 +171,7 @@ async function main() {
     console.log(`Mint created: ${mint.publicKey.toBase58()}`);
     console.log(`Transaction: ${sig}`);
     persistMintAddress(mint.publicKey);
-    console.log(`Saved to backend/keys/mint-address.json`);
+    console.log(`Saved to backend/keys/${networkLabel()}/mint-address.json`);
     mintPubkey = mint.publicKey;
   }
 

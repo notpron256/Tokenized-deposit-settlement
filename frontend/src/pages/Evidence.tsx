@@ -12,9 +12,19 @@ function formatCents(cents: number): string {
   return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
-function explorerUrl(signature: string): string {
+function explorerUrl(signature: string, network: "local" | "devnet"): string {
+  if (network === "devnet") {
+    return `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
+  }
   const customUrl = encodeURIComponent("http://localhost:8899");
   return `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=${customUrl}`;
+}
+
+function solscanUrl(signature: string, network: "local" | "devnet"): string | null {
+  // Solscan has no local-validator equivalent to Explorer's custom-RPC
+  // mode — it only indexes public clusters, so this is devnet/mainnet only.
+  if (network !== "devnet") return null;
+  return `https://solscan.io/tx/${signature}?cluster=devnet`;
 }
 
 function PartyCard({ label, party }: { label: string; party: TransferPartyEvidence }) {
@@ -186,16 +196,35 @@ export default function Evidence() {
                 {evidence.blockTime && ` — ${new Date(evidence.blockTime * 1000).toLocaleString()}`}
               </p>
               <p>
-                <a href={explorerUrl(evidence.signature)} target="_blank" rel="noopener noreferrer">
-                  Open in Solana Explorer (pointed at this local validator) →
+                <a href={explorerUrl(evidence.signature, evidence.network)} target="_blank" rel="noopener noreferrer">
+                  {evidence.network === "devnet"
+                    ? "Open in Solana Explorer (standard devnet cluster — no custom RPC needed) →"
+                    : "Open in Solana Explorer (pointed at this local validator) →"}
                 </a>
               </p>
+              {evidence.network === "devnet" && (
+                <p>
+                  <a href={solscanUrl(evidence.signature, evidence.network)!} target="_blank" rel="noopener noreferrer">
+                    Open in Solscan (independent third-party explorer) →
+                  </a>
+                </p>
+              )}
               <p className="evidence-identity-caption">
-                If that link doesn't load the transaction (some browsers block a public site from reaching
-                localhost), do it manually: go to explorer.solana.com, open the cluster dropdown (top right), choose
-                "Custom RPC URL", enter <span className="mono-cell">http://localhost:8899</span>, then paste the
-                signature above into the search bar. Either way, this is Solana Explorer reading the validator
-                directly — not this application reporting on itself.
+                {evidence.network === "devnet" ? (
+                  <>
+                    This transaction lives on public Solana devnet — a shared network, not this machine. Both links
+                    above query it from their own servers, with no custom RPC configuration at all, which is only
+                    possible because this data is genuinely visible to anyone, not just this app or this computer.
+                  </>
+                ) : (
+                  <>
+                    If that link doesn't load the transaction (some browsers block a public site from reaching
+                    localhost), do it manually: go to explorer.solana.com, open the cluster dropdown (top right),
+                    choose "Custom RPC URL", enter <span className="mono-cell">http://localhost:8899</span>, then
+                    paste the signature above into the search bar. Either way, this is Solana Explorer reading the
+                    validator directly — not this application reporting on itself.
+                  </>
+                )}
               </p>
             </section>
           </>
@@ -211,8 +240,8 @@ export default function Evidence() {
         Click into any past transfer to see the full backing evidence for its Travel Rule compliance claim — the
         decoded on-chain memo, a live integrity check against Postgres, the real identity data it resolves to, and
         an independent Explorer lookup. Sourced from transfer_events, not from re-scanning chain history, so the
-        list survives validator restarts even though very old signatures themselves may age out of this local
-        validator's retained ledger history.
+        list survives validator restarts even though very old signatures themselves may age out of a local
+        validator's retained ledger history (not a concern on devnet, which retains history indefinitely).
       </p>
 
       {listError && <p className="status-message status-error">{listError}</p>}

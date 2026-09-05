@@ -16,7 +16,7 @@
  */
 import { Router } from "express";
 import bs58 from "bs58";
-import { getConnection } from "../solana/authorities.js";
+import { getConnection, networkLabel } from "../solana/authorities.js";
 import { pool } from "../db/pool.js";
 import { parseTravelRuleMemo, MEMO_PROGRAM_V1, MEMO_PROGRAM_V3 } from "../solana/travelRuleMemo.js";
 import { identityHash } from "../solana/identityCommitment.js";
@@ -83,8 +83,12 @@ transferEvidenceRouter.get("/transfers/:signature/evidence", async (req, res) =>
     const tx = await connection.getTransaction(signature, { maxSupportedTransactionVersion: 0 });
 
     if (!tx) {
+      const explanation =
+        networkLabel() === "local"
+          ? "On this local validator that almost always means it's aged out of the retained ledger history — a local-dev-only limitation (a real Solana cluster retains this indefinitely), not evidence anything is wrong with the transfer itself."
+          : "On devnet this is unexpected — devnet retains transaction history indefinitely, so this may indicate an RPC issue rather than a retention limit.";
       return res.status(404).json({
-        error: `Transaction ${signature} was not found on-chain. On this local validator that almost always means it's aged out of the retained ledger history — a local-dev-only limitation (a real Solana cluster retains this indefinitely), not evidence anything is wrong with the transfer itself.`,
+        error: `Transaction ${signature} was not found on-chain. ${explanation}`,
       });
     }
     if (tx.meta?.err) {
@@ -133,6 +137,7 @@ transferEvidenceRouter.get("/transfers/:signature/evidence", async (req, res) =>
 
     res.json({
       signature,
+      network: networkLabel(),
       slot: tx.slot,
       blockTime: tx.blockTime,
       memo: { raw: parsed.raw, reference: parsed.reference, remittance: parsed.remittance },
