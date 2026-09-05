@@ -30,4 +30,6 @@ pub enum ComplianceHookError {
     InvalidDestinationAccount,
     #[msg("Transfer involves a sanctioned party")]
     SanctionedParty,
+    #[msg("Could not read the mint account's Permanent Delegate extension data")]
+    InvalidMintAccount,
 }

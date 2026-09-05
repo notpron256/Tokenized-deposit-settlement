@@ -184,3 +184,38 @@ CREATE TABLE IF NOT EXISTS reconciliation_breaks (
 -- This table was dropped from both the local and devnet databases when
 -- this comment was corrected; if a future flag type ever needs its own
 -- structured record, add it fresh rather than reviving this one.
+
+-- Phase 6.5: Permanent Delegate clawback — a unilateral, bank-initiated
+-- compliance-recovery action (spec-001.md, Areas of concern: the SAR/
+-- DAML-freeze analogy), distinct from Phase 8's client-initiated,
+-- co-signed redemption. Same pending_chain -> confirmed -> settled/failed
+-- finality gating as every other value-moving flow (deposit_events,
+-- transfer_events). On settlement, only `ledger_balances.tokenized_cents`
+-- for `client_id` is decremented — cash_balance_cents is deliberately left
+-- untouched: a clawback reclaims the on-chain token representation
+-- pending investigation, it does not itself extinguish the underlying
+-- legal deposit liability (that would need a separate, more formal
+-- determination — e.g. a court order or regulatory forfeiture
+-- proceeding). This is why Phase 9 reconciliation's core invariant
+-- (on-chain ATA balance vs. tokenized_cents) is unaffected by a correctly
+-- settled clawback: tokenized_cents is brought down to match the reduced
+-- on-chain balance in the same step, so no break is ever produced by this
+-- path alone. The resulting cash/tokenized gap is a real, deliberate
+-- business state pending resolution — never to be confused with a
+-- reconciliation break, and must stay visibly labeled as such wherever
+-- shown (UI, future alerting).
+CREATE TABLE IF NOT EXISTS clawback_events (
+    id                            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id                     UUID NOT NULL REFERENCES clients(id),
+    amount_cents                  BIGINT NOT NULL,
+    reason                        TEXT NOT NULL,
+    -- Same honesty labeling as clients.kyc_reference: records where the
+    -- operator claims a real Suspicious Activity Report (or equivalent)
+    -- was filed out-of-band — e.g. an NCA/FinCEN case number — never
+    -- independently verified or looked up against any real regulatory
+    -- system.
+    regulatory_report_reference   TEXT NOT NULL,
+    status                        TEXT NOT NULL DEFAULT 'pending_chain' CHECK (status IN ('pending_chain', 'confirmed', 'settled', 'failed')),
+    tx_signature                  TEXT,
+    created_at                    TIMESTAMPTZ NOT NULL DEFAULT now()
+);

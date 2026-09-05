@@ -5,6 +5,10 @@ pub mod instructions;
 pub mod state;
 
 use anchor_lang::prelude::*;
+use spl_token_2022_interface::{
+    extension::{permanent_delegate::get_permanent_delegate, PodStateWithExtensions},
+    pod::PodMint,
+};
 use spl_transfer_hook_interface::instruction::TransferHookInstruction;
 
 pub use constants::*;
@@ -68,9 +72,33 @@ pub mod compliance_hook {
     /// the transfer, in order, so the first failing check is what's
     /// reported); 1e is non-blocking and always runs last, after the
     /// transfer has already passed every blocking check.
+    ///
+    /// Phase 6.5: all three blocking checks are structured around an
+    /// ordinary client-signed transfer — `accounts[EXECUTE_OWNER_INDEX]`
+    /// ("owner/delegate" per the Transfer Hook interface spec) is assumed
+    /// to be the transferring client themselves. That assumption breaks
+    /// for a Permanent-Delegate-authorized transfer (bank-ops signs, not
+    /// the client): velocity would look up a PDA that was never created
+    /// for bank-ops, the Travel Rule shape doesn't fit a bank-to-recovery
+    /// movement, and sanctions-screening the *signer* instead of the real
+    /// source account owner is actively wrong — verified on-chain (see
+    /// spec-001.md, Areas of concern) that it let a clawback out of an
+    /// actually-sanctioned account through undetected, since it never
+    /// inspected the real party at all. So this path is detected first —
+    /// by reading the mint's own configured Permanent Delegate off its
+    /// extension data and comparing it to the signer — and if it matches,
+    /// all three blocking checks are skipped entirely; this is Permanent
+    /// Delegate acting as the emergency override it's meant to be, not a
+    /// client transfer wearing a disguise. Only the non-blocking
+    /// large-transaction flag still runs — a large clawback is exactly the
+    /// kind of thing worth an audit signal.
     pub fn fallback(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Result<()> {
         match TransferHookInstruction::unpack(data) {
             Ok(TransferHookInstruction::Execute { amount }) => {
+                if is_permanent_delegate_transfer(accounts)? {
+                    flag_large_transaction(accounts, amount)?;
+                    return Ok(());
+                }
                 check_velocity_limit(program_id, accounts, amount)?;
                 check_travel_rule_memo(accounts)?;
                 check_sanctions(program_id, accounts)?;
@@ -122,6 +150,28 @@ fn read_token_account_owner(account_info: &AccountInfo) -> Result<Pubkey> {
         .try_into()
         .map_err(|_| error!(ComplianceHookError::InvalidDestinationAccount))?;
     Ok(Pubkey::new_from_array(owner_bytes))
+}
+
+/// True if this Execute call's signing authority (accounts[EXECUTE_OWNER_INDEX])
+/// is the mint's own configured Permanent Delegate — i.e. this is a
+/// bank-initiated clawback (Phase 6.5), not an ordinary client-signed
+/// transfer. Reads the delegate straight off the mint account's own
+/// extension data (accounts[EXECUTE_MINT_INDEX], already passed into every
+/// Execute call — no new account needed) via spl-token-2022-interface's own
+/// TLV-extension parsing, the same officially-supported mechanism Token-2022
+/// itself uses, rather than hand-decoding the TLV layout.
+fn is_permanent_delegate_transfer(accounts: &[AccountInfo]) -> Result<bool> {
+    let mint_info = &accounts[EXECUTE_MINT_INDEX];
+    let mint_data = mint_info.try_borrow_data()?;
+    let mint_state = PodStateWithExtensions::<PodMint>::unpack(&mint_data)
+        .map_err(|_| error!(ComplianceHookError::InvalidMintAccount))?;
+
+    let permanent_delegate = get_permanent_delegate(&mint_state);
+    let owner_info = &accounts[EXECUTE_OWNER_INDEX];
+
+    Ok(permanent_delegate
+        .map(|delegate| delegate.as_ref() == owner_info.key.as_ref())
+        .unwrap_or(false))
 }
 
 fn check_velocity_limit(program_id: &Pubkey, accounts: &[AccountInfo], amount: u64) -> Result<()> {

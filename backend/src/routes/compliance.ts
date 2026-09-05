@@ -23,25 +23,62 @@
  *   list guessing which entries are real).
  */
 import { Router } from "express";
-import { getConnection, networkLabel } from "../solana/authorities.js";
+import { getConnection, loadOrCreateBankOpsKeypair, networkLabel } from "../solana/authorities.js";
 import { readSanctionsRegistry, SANCTIONS_SOURCE_LABELS } from "../solana/sanctions.js";
 import { pool } from "../db/pool.js";
 
 export const complianceRouter = Router();
 
+const BANK_RECOVERY_ACCOUNT_LABEL = "Bank Recovery Account (Compliance)";
+
+/** Name resolution for an indexed_transfers row's sender/recipient, in
+ * priority order:
+ *   1. The Travel Rule memo's ordering/beneficiary client ID, if the memo
+ *      was that shape (ordinary client-to-client transfers).
+ *   2. The bank-ops recovery ATA's own owner pubkey (Phase 6.5 clawback)
+ *      — labeled explicitly rather than left as a raw address, since it
+ *      isn't a client and never will be one.
+ *   3. A plain owner-address match against `clients` — covers a clawback's
+ *      *source* side (a real onboarded client, just not carried in a
+ *      Travel-Rule-shaped memo since a clawback has no such pair) and any
+ *      other future transfer type that reaches the chain without a
+ *      parseable memo.
+ * Falls through to `null` (rendered as a raw shortened address) only when
+ * none of these resolve — never silently mislabeled. */
+function resolveName(
+  memoClientName: string | null,
+  ownerAddress: string,
+  bankRecoveryOwner: string,
+  nameByOwner: Map<string, string>,
+): string | null {
+  if (memoClientName) return memoClientName;
+  if (ownerAddress === bankRecoveryOwner) return BANK_RECOVERY_ACCOUNT_LABEL;
+  return nameByOwner.get(ownerAddress) ?? null;
+}
+
 complianceRouter.get("/compliance/flags", async (_req, res) => {
   try {
+    const connection = getConnection();
+    const bankOps = await loadOrCreateBankOpsKeypair(connection);
+    const bankRecoveryOwner = bankOps.publicKey.toBase58();
+
     const { rows } = await pool.query(
       `SELECT it.tx_signature, it.block_time, it.amount_cents, it.sender_owner, it.recipient_owner,
               it.ordering_client_id, it.beneficiary_client_id, it.memo_reference,
-              oc.name AS ordering_name, bc.name AS beneficiary_name
+              oc.name AS ordering_name, bc.name AS beneficiary_name,
+              ce.regulatory_report_reference AS clawback_report_reference
        FROM indexed_transfers it
        LEFT JOIN clients oc ON oc.id::text = it.ordering_client_id
        LEFT JOIN clients bc ON bc.id::text = it.beneficiary_client_id
+       LEFT JOIN clawback_events ce ON ce.tx_signature = it.tx_signature
        WHERE it.large_transaction_flag = true
        ORDER BY it.block_time DESC NULLS LAST, it.indexed_at DESC
        LIMIT 200`,
     );
+
+    const { rows: clients } = await pool.query(`SELECT name, owner_address FROM clients`);
+    const nameByOwner = new Map(clients.map((c) => [c.owner_address, c.name]));
+
     res.json(
       rows.map((row) => ({
         txSignature: row.tx_signature,
@@ -49,9 +86,15 @@ complianceRouter.get("/compliance/flags", async (_req, res) => {
         amountCents: Number(row.amount_cents),
         senderOwner: row.sender_owner,
         recipientOwner: row.recipient_owner,
-        orderingName: row.ordering_name ?? null,
-        beneficiaryName: row.beneficiary_name ?? null,
-        memoReference: row.memo_reference,
+        orderingName: resolveName(row.ordering_name, row.sender_owner, bankRecoveryOwner, nameByOwner),
+        beneficiaryName: resolveName(row.beneficiary_name, row.recipient_owner, bankRecoveryOwner, nameByOwner),
+        // The on-chain Travel Rule memo's :20: field for an ordinary
+        // transfer; for a clawback (whose memo isn't Travel-Rule-shaped,
+        // so it never carries this) the real regulatory report reference
+        // recorded in clawback_events at settlement time instead — never
+        // "none" for a legitimate clawback just because its memo takes a
+        // different, honestly-labeled shape (spec-001.md, Areas of concern).
+        memoReference: row.memo_reference ?? row.clawback_report_reference ?? null,
       })),
     );
   } catch (err) {
@@ -62,16 +105,26 @@ complianceRouter.get("/compliance/flags", async (_req, res) => {
 
 complianceRouter.get("/compliance/activity", async (_req, res) => {
   try {
+    const connection = getConnection();
+    const bankOps = await loadOrCreateBankOpsKeypair(connection);
+    const bankRecoveryOwner = bankOps.publicKey.toBase58();
+
     const { rows } = await pool.query(
       `SELECT it.tx_signature, it.block_time, it.amount_cents, it.sender_owner, it.recipient_owner,
               it.ordering_client_id, it.beneficiary_client_id, it.memo_reference, it.large_transaction_flag,
-              oc.name AS ordering_name, bc.name AS beneficiary_name
+              oc.name AS ordering_name, bc.name AS beneficiary_name,
+              ce.regulatory_report_reference AS clawback_report_reference
        FROM indexed_transfers it
        LEFT JOIN clients oc ON oc.id::text = it.ordering_client_id
        LEFT JOIN clients bc ON bc.id::text = it.beneficiary_client_id
+       LEFT JOIN clawback_events ce ON ce.tx_signature = it.tx_signature
        ORDER BY it.block_time DESC NULLS LAST, it.indexed_at DESC
        LIMIT 500`,
     );
+
+    const { rows: clients } = await pool.query(`SELECT name, owner_address FROM clients`);
+    const nameByOwner = new Map(clients.map((c) => [c.owner_address, c.name]));
+
     res.json(
       rows.map((row) => ({
         txSignature: row.tx_signature,
@@ -79,9 +132,9 @@ complianceRouter.get("/compliance/activity", async (_req, res) => {
         amountCents: Number(row.amount_cents),
         senderOwner: row.sender_owner,
         recipientOwner: row.recipient_owner,
-        orderingName: row.ordering_name ?? null,
-        beneficiaryName: row.beneficiary_name ?? null,
-        memoReference: row.memo_reference,
+        orderingName: resolveName(row.ordering_name, row.sender_owner, bankRecoveryOwner, nameByOwner),
+        beneficiaryName: resolveName(row.beneficiary_name, row.recipient_owner, bankRecoveryOwner, nameByOwner),
+        memoReference: row.memo_reference ?? row.clawback_report_reference ?? null,
         largeTransactionFlag: row.large_transaction_flag,
       })),
     );

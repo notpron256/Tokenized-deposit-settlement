@@ -73,7 +73,7 @@
   color: #374151;
 }
 
-.onboarding-form input,
+.onboarding-form input:not([type="checkbox"]),
 .onboarding-form select {
   padding: 0.5rem 0.6rem;
   border: 1px solid #d1d5db;
@@ -335,6 +335,31 @@
 
 .compliance-section {
   margin-top: 2rem;
+}
+
+.clawback-section {
+  border-left: 3px solid #991b1b;
+  padding-left: 1rem;
+}
+
+.clawback-section h4 {
+  margin-top: 1.5rem;
+}
+
+.clawback-checkbox-label {
+  max-width: 260px;
+}
+
+.clawback-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.clawback-checkbox-row input[type="checkbox"] {
+  min-width: 0;
+  width: auto;
+  flex-shrink: 0;
 }
 
 .activity-filters {

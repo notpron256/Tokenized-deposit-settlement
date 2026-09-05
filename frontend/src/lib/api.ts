@@ -1,5 +1,16 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4100";
 
+export interface HealthResponse {
+  status: string;
+  service: string;
+  network: "local" | "devnet";
+}
+
+export async function getHealth(): Promise<HealthResponse> {
+  const res = await fetch(`${API_BASE_URL}/health`);
+  return handleResponse(res);
+}
+
 export interface Client {
   id: string;
   name: string;
@@ -108,6 +119,26 @@ export interface SanctionsRegistryResponse {
   entries: SanctionsRegistryEntry[];
 }
 
+export interface ClawbackResult {
+  signature: string;
+  amountCents: number;
+  clientTokenizedCents: number;
+  clientOnChainBalanceCents: number;
+}
+
+export interface ClawbackEvent {
+  id: string;
+  clientName: string;
+  amountCents: number;
+  reason: string;
+  regulatoryReportReference: string;
+  status: string;
+  txSignature: string | null;
+  createdAt: string;
+}
+
+export class ClawbackApiError extends Error {}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -186,5 +217,28 @@ export async function listActivity(): Promise<ActivityEntry[]> {
 
 export async function getSanctionsRegistry(): Promise<SanctionsRegistryResponse> {
   const res = await fetch(`${API_BASE_URL}/compliance/registry`);
+  return handleResponse(res);
+}
+
+export async function executeClawback(
+  clientId: string,
+  amountCents: number | "full",
+  reason: string,
+  regulatoryReportReference: string,
+): Promise<ClawbackResult> {
+  const res = await fetch(`${API_BASE_URL}/clawback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientId, amountCents, reason, regulatoryReportReference }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new ClawbackApiError(body.error ?? `Request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function listClawbacks(): Promise<ClawbackEvent[]> {
+  const res = await fetch(`${API_BASE_URL}/clawback`);
   return handleResponse(res);
 }

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 import Onboarding from "./pages/Onboarding";
 import Fund from "./pages/Fund";
 import Transfer from "./pages/Transfer";
 import Evidence from "./pages/Evidence";
 import Compliance from "./pages/Compliance";
+import { getHealth } from "./lib/api";
 
 const TABS = [
   "Onboarding",
@@ -30,12 +31,19 @@ const PLACEHOLDER_PHASE: Record<Tab, string> = {
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("Onboarding");
+  const [network, setNetwork] = useState<"local" | "devnet" | null>(null);
+
+  useEffect(() => {
+    getHealth()
+      .then((res) => setNetwork(res.network))
+      .catch(() => setNetwork(null));
+  }, []);
 
   return (
     <div className="app-shell">
       <header className="app-header">
         <h1>Tokenized Deposit Settlement</h1>
-        <p className="app-subtitle">Proof-of-concept — localhost validator</p>
+        <p className="app-subtitle">Proof-of-concept{network && ` — ${network}`}</p>
       </header>
 
       <nav className="tab-nav">
