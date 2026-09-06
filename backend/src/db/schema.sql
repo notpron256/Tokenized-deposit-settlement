@@ -175,6 +175,22 @@ CREATE TABLE IF NOT EXISTS reconciliation_breaks (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Both fields backfilled after reconciliation_breaks already existed
+-- (same pattern as kyc_reference etc.): break_type distinguishes the
+-- aggregate check (client_id IS NULL) from a per-client break; there is
+-- deliberately no distinct DB row type for the two invariants otherwise,
+-- since a break is a break regardless of which check surfaced it.
+-- classification distinguishes a genuinely unexplained mismatch from one
+-- that exactly matches an in-flight (status='confirmed', real
+-- tx_signature, not yet 'settled') event for that client — plan-001.md
+-- decision #5's "a stuck pending_chain row is exactly what reconciliation
+-- is meant to surface": that's an operational/timing artifact (the chain
+-- action really happened, Postgres just hasn't caught up to it yet), not
+-- a data-integrity error, and must never be silently conflated with one.
+ALTER TABLE reconciliation_breaks ADD COLUMN IF NOT EXISTS break_type TEXT NOT NULL DEFAULT 'per_client' CHECK (break_type IN ('aggregate', 'per_client'));
+ALTER TABLE reconciliation_breaks ADD COLUMN IF NOT EXISTS classification TEXT NOT NULL DEFAULT 'unexplained' CHECK (classification IN ('unexplained', 'in_flight'));
+ALTER TABLE reconciliation_breaks ADD COLUMN IF NOT EXISTS note TEXT;
+
 -- Phase 6's off-chain indexer output: superseded by the
 -- indexed_transfers.large_transaction_flag boolean column above (a
 -- separate compliance_flags table was drafted early in Phase 6's design

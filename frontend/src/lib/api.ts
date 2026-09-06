@@ -284,3 +284,38 @@ export async function listClawbacks(): Promise<ClawbackEvent[]> {
   const res = await fetch(`${API_BASE_URL}/clawback`);
   return handleResponse(res);
 }
+
+export interface ReconciliationBreak {
+  clientId: string | null;
+  clientName: string | null;
+  breakType: "aggregate" | "per_client";
+  classification: "unexplained" | "in_flight";
+  expectedCents: number;
+  actualCents: number;
+  deltaCents: number;
+  note: string | null;
+}
+
+export interface ReconciliationRunResult {
+  ranAt: string;
+  clientsChecked: number;
+  aggregateExpectedCents: number;
+  aggregateActualCents: number;
+  breaks: ReconciliationBreak[];
+  allClear: boolean;
+}
+
+export interface ReconciliationBreakRecord extends ReconciliationBreak {
+  id: string;
+  createdAt: string;
+}
+
+export async function runReconciliation(): Promise<ReconciliationRunResult> {
+  const res = await fetch(`${API_BASE_URL}/reconciliation/run`, { method: "POST" });
+  return handleResponse(res);
+}
+
+export async function listReconciliationBreaks(): Promise<ReconciliationBreakRecord[]> {
+  const res = await fetch(`${API_BASE_URL}/reconciliation/breaks`);
+  return handleResponse(res);
+}

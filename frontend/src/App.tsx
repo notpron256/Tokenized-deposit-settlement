@@ -6,6 +6,7 @@ import Transfer from "./pages/Transfer";
 import Evidence from "./pages/Evidence";
 import Compliance from "./pages/Compliance";
 import Redeem from "./pages/Redeem";
+import Reconciliation from "./pages/Reconciliation";
 import { getHealth } from "./lib/api";
 
 const TABS = [
@@ -72,6 +73,8 @@ function App() {
           <Compliance />
         ) : activeTab === "Redeem" ? (
           <Redeem />
+        ) : activeTab === "Reconciliation" ? (
+          <Reconciliation />
         ) : (
           <>
             <h2>{activeTab}</h2>

@@ -18,6 +18,7 @@ const { complianceRouter } = await import("./routes/compliance.js");
 const { clawbackRouter } = await import("./routes/clawback.js");
 const { sanctionsRouter } = await import("./routes/sanctions.js");
 const { redeemRouter } = await import("./routes/redeem.js");
+const { reconciliationRouter } = await import("./routes/reconciliation.js");
 const { networkLabel } = await import("./solana/authorities.js");
 
 const app = express();
@@ -36,6 +37,7 @@ app.use(complianceRouter);
 app.use(clawbackRouter);
 app.use(sanctionsRouter);
 app.use(redeemRouter);
+app.use(reconciliationRouter);
 
 const port = Number(process.env.PORT ?? 4000);
 app.listen(port, () => {
