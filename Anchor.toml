@@ -8,6 +8,7 @@ skip-lint = false
 
 [programs.localnet]
 compliance_hook = "9AxMnpb5g8c8DSnDHNYEeafiTrSzWZbthoDEQpTKiD5z"
+redemption_gateway = "A4JWxQpSW19yZ27bFR9Gfxz14SxVDhExQoXvixt3zVzN"
 
 [provider]
 cluster = "localnet"

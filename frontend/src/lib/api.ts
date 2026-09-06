@@ -61,6 +61,19 @@ export class TransferApiError extends Error {
   }
 }
 
+export interface RedeemResponse {
+  signature: string;
+  cashBalanceCents: number;
+  tokenizedCents: number;
+  onChainBalanceCents: number;
+}
+
+export class RedeemApiError extends Error {
+  constructor(message: string, public sanctionsBadge?: string) {
+    super(message);
+  }
+}
+
 export interface TransferListItem {
   id: string;
   senderName: string;
@@ -139,6 +152,17 @@ export interface ClawbackEvent {
 
 export class ClawbackApiError extends Error {}
 
+export interface SanctionsSyncResult {
+  publishDate: string;
+  totalSdnEntriesParsed: number;
+  solanaTaggedCount: number;
+  solanaValidCount: number;
+  signature: string;
+  realEntriesWritten: number;
+  syntheticEntriesPreserved: number;
+  totalEntriesWritten: number;
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -195,6 +219,19 @@ export async function transferTokens(
   return res.json();
 }
 
+export async function redeemTokens(clientId: string, amountCents: number): Promise<RedeemResponse> {
+  const res = await fetch(`${API_BASE_URL}/redeem`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientId, amountCents }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new RedeemApiError(body.error ?? `Request failed: ${res.status}`, body.sanctionsBadge);
+  }
+  return res.json();
+}
+
 export async function listTransferEvidence(): Promise<TransferListItem[]> {
   const res = await fetch(`${API_BASE_URL}/transfers`);
   return handleResponse(res);
@@ -217,6 +254,11 @@ export async function listActivity(): Promise<ActivityEntry[]> {
 
 export async function getSanctionsRegistry(): Promise<SanctionsRegistryResponse> {
   const res = await fetch(`${API_BASE_URL}/compliance/registry`);
+  return handleResponse(res);
+}
+
+export async function syncSanctionsRegistry(): Promise<SanctionsSyncResult> {
+  const res = await fetch(`${API_BASE_URL}/sanctions/sync`, { method: "POST" });
   return handleResponse(res);
 }
 

@@ -3,6 +3,7 @@ import {
   listComplianceFlags,
   listActivity,
   getSanctionsRegistry,
+  syncSanctionsRegistry,
   listClients,
   executeClawback,
   listClawbacks,
@@ -12,6 +13,7 @@ import {
   type SanctionsRegistryEntry,
   type Client,
   type ClawbackEvent,
+  type SanctionsSyncResult,
 } from "../lib/api";
 
 function formatCents(cents: number): string {
@@ -60,6 +62,35 @@ export default function Compliance() {
   const [registryNetwork, setRegistryNetwork] = useState<"local" | "devnet" | null>(null);
   const [registryLoading, setRegistryLoading] = useState(true);
   const [registryError, setRegistryError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncResult, setSyncResult] = useState<SanctionsSyncResult | null>(null);
+
+  function refreshRegistry() {
+    setRegistryLoading(true);
+    getSanctionsRegistry()
+      .then((res) => {
+        setRegistryEntries(res.entries);
+        setRegistryNetwork(res.network);
+      })
+      .catch((err) => setRegistryError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setRegistryLoading(false));
+  }
+
+  async function handleSyncNow() {
+    setSyncing(true);
+    setSyncError(null);
+    setSyncResult(null);
+    try {
+      const result = await syncSanctionsRegistry();
+      setSyncResult(result);
+      refreshRegistry();
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   function refreshClawbackEvents() {
     setClawbackEventsLoading(true);
@@ -89,13 +120,7 @@ export default function Compliance() {
       .catch((err) => setActivityError(err instanceof Error ? err.message : String(err)))
       .finally(() => setActivityLoading(false));
 
-    getSanctionsRegistry()
-      .then((res) => {
-        setRegistryEntries(res.entries);
-        setRegistryNetwork(res.network);
-      })
-      .catch((err) => setRegistryError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setRegistryLoading(false));
+    refreshRegistry();
   }, []);
 
   const clientOptions = useMemo(() => {
@@ -362,6 +387,24 @@ export default function Compliance() {
           field, the same honesty labeling used elsewhere in this project: a REAL badge means real OFAC SDN data, a
           SYNTHETIC badge means a deliberately seeded test entry.
         </p>
+        <p className="kyc-disclaimer">
+          "Sync Now" fetches OFAC's live SDN list, extracts every Solana-tagged address, independently validates
+          each as a genuine public key, and full-replaces the registry — always preserving any existing SYNTHETIC
+          entries rather than overwriting them.
+        </p>
+        <button type="button" className="evidence-retry" onClick={handleSyncNow} disabled={syncing}>
+          {syncing ? "Syncing…" : "Sync Now"}
+        </button>
+        {syncError && <p className="status-message status-error">{syncError}</p>}
+        {syncResult && (
+          <p className="status-message status-success">
+            Fetched {syncResult.totalSdnEntriesParsed} SDN entries, {syncResult.solanaTaggedCount} Solana-tagged (
+            {syncResult.solanaValidCount} valid) found — registry updated: {syncResult.realEntriesWritten} real
+            entries, {syncResult.syntheticEntriesPreserved} synthetic preserved ({syncResult.totalEntriesWritten}{" "}
+            total). Publish date: {syncResult.publishDate}. Signature:{" "}
+            <span className="mono-cell">{shortAddress(syncResult.signature)}</span>
+          </p>
+        )}
         {registryError && <p className="status-message status-error">{registryError}</p>}
         {registryLoading ? (
           <p>Loading…</p>

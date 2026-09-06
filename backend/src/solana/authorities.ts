@@ -23,6 +23,12 @@ export const RPC_URL = process.env.SOLANA_RPC_URL ?? "http://localhost:8899";
 export const HOOK_PROGRAM_ID = new PublicKey(
   "9AxMnpb5g8c8DSnDHNYEeafiTrSzWZbthoDEQpTKiD5z",
 );
+/** Phase 8's redemption-gateway program (programs/redemption-gateway),
+ * same program ID on every network it's deployed to (the tracked
+ * program-keypair.json is what makes that possible). */
+export const REDEMPTION_GATEWAY_PROGRAM_ID = new PublicKey(
+  "A4JWxQpSW19yZ27bFR9Gfxz14SxVDhExQoXvixt3zVzN",
+);
 export const DECIMALS = 2;
 
 /** "devnet" if SOLANA_RPC_URL points at devnet, otherwise "local" — the
@@ -34,6 +40,7 @@ export function networkLabel(): "devnet" | "local" {
 const KEYS_DIR = path.resolve(__dirname, "../../keys", networkLabel());
 const BANK_OPS_KEYPAIR_PATH = path.join(KEYS_DIR, "bank-ops.json");
 const MINT_ADDRESS_PATH = path.join(KEYS_DIR, "mint-address.json");
+const COMPLIANCE_SIGNER_KEYPAIR_PATH = path.join(KEYS_DIR, "compliance-signer.json");
 
 export function getConnection(): Connection {
   return new Connection(RPC_URL, "confirmed");
@@ -85,6 +92,25 @@ export async function loadOrCreateBankOpsKeypair(connection?: Connection): Promi
     );
   }
 
+  return keypair;
+}
+
+/** Loads the persistent redemption-gateway compliance-signer keypair
+ * (plan-001.md decision #4: a distinct authority from bank-ops — spec-
+ * 001.md's Areas of concern lists it separately) for the current network,
+ * generating and saving one on first use. Unlike bank-ops, this key never
+ * pays for or creates anything — it only ever appears as a readonly
+ * `Signer` in the gateway's `redeem` instruction — so it needs no SOL
+ * balance and no airdrop, on either network. */
+export function loadOrCreateComplianceSignerKeypair(): Keypair {
+  if (fs.existsSync(COMPLIANCE_SIGNER_KEYPAIR_PATH)) {
+    const secret = JSON.parse(fs.readFileSync(COMPLIANCE_SIGNER_KEYPAIR_PATH, "utf-8"));
+    return Keypair.fromSecretKey(Uint8Array.from(secret));
+  }
+  const keypair = Keypair.generate();
+  fs.mkdirSync(KEYS_DIR, { recursive: true });
+  fs.writeFileSync(COMPLIANCE_SIGNER_KEYPAIR_PATH, JSON.stringify(Array.from(keypair.secretKey)));
+  console.log(`Generated new ${networkLabel()} compliance-signer keypair, saved to ${COMPLIANCE_SIGNER_KEYPAIR_PATH}`);
   return keypair;
 }
 

@@ -5,6 +5,7 @@ import Fund from "./pages/Fund";
 import Transfer from "./pages/Transfer";
 import Evidence from "./pages/Evidence";
 import Compliance from "./pages/Compliance";
+import Redeem from "./pages/Redeem";
 import { getHealth } from "./lib/api";
 
 const TABS = [
@@ -69,6 +70,8 @@ function App() {
           <Evidence />
         ) : activeTab === "Compliance" ? (
           <Compliance />
+        ) : activeTab === "Redeem" ? (
+          <Redeem />
         ) : (
           <>
             <h2>{activeTab}</h2>
