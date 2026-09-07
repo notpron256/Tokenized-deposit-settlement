@@ -50,14 +50,17 @@ export default function Reconciliation() {
     <div className="reconciliation-page">
       <h2>Reconciliation</h2>
       <p className="kyc-disclaimer">
-        Two invariants (spec-001.md): an <strong>aggregate</strong> check (the mint's own on-chain supply vs. the sum
-        of every client's <span className="mono-cell">tokenized_cents</span>) and the authoritative{" "}
-        <strong>per-client</strong> check (each client's real on-chain ATA balance vs. their own{" "}
-        <span className="mono-cell">tokenized_cents</span>) — an aggregate match alone can hide two clients' errors
-        netting to zero. On-chain balances are read fresh, directly from the chain, never from this backend's own
-        transfer/fund/clawback/redeem bookkeeping. A break that exactly matches a confirmed-but-not-yet-settled
-        event for that client is labeled <strong>in_flight</strong> (the chain action already happened, Postgres
-        just hasn't caught up) rather than treated as a genuine data-integrity error.
+        Two invariants (spec-001.md): a true <strong>aggregate</strong> check (every real on-chain token account
+        found under this mint, summed independently of Postgres, vs. the mint's own on-chain supply — these should
+        always match) and the authoritative <strong>per-client</strong> check (each client's real on-chain ATA
+        balance vs. their own <span className="mono-cell">tokenized_cents</span>) — an aggregate match alone can hide
+        two clients' errors netting to zero. On-chain balances are read fresh, directly from the chain, never from
+        this backend's own transfer/fund/clawback/redeem bookkeeping. A break that exactly matches a
+        confirmed-but-not-yet-settled event for that client is labeled <strong>in_flight</strong> (the chain action
+        already happened, Postgres just hasn't caught up) rather than treated as a genuine data-integrity error.
+        Real on-chain holders that aren't any currently-active client (almost always historical demo/test data from
+        before a reset) are reported separately below as <strong>untracked holders</strong> — fully explained, never
+        a break.
       </p>
 
       <button type="button" onClick={handleRun} disabled={running}>
@@ -70,8 +73,21 @@ export default function Reconciliation() {
         <div className={lastRun.allClear ? "status-message status-success" : "status-message status-error"}>
           <p>
             Ran at {new Date(lastRun.ranAt).toLocaleString()} — {lastRun.clientsChecked} client(s) checked. Aggregate:
-            expected {formatCents(lastRun.aggregateExpectedCents)}, actual (on-chain mint supply){" "}
-            {formatCents(lastRun.aggregateActualCents)}.
+            mint supply {formatCents(lastRun.mintSupplyCents)}, sum of all real on-chain accounts{" "}
+            {formatCents(lastRun.allAccountsTotalCents)}.
+          </p>
+          <p>
+            Tracked by active clients (+ bank recovery ATA): {formatCents(lastRun.trackedCents)}.{" "}
+            {lastRun.untrackedHoldersCount > 0 ? (
+              <>
+                <strong>
+                  {lastRun.untrackedHoldersCount} untracked holder{lastRun.untrackedHoldersCount === 1 ? "" : "s"}
+                </strong>{" "}
+                (historical/demo data predating a reset, not a break): {formatCents(lastRun.untrackedHoldersCents)}.
+              </>
+            ) : (
+              "No untracked holders."
+            )}
           </p>
           {lastRun.allClear ? (
             <p>All clear — no breaks detected.</p>

@@ -38,16 +38,23 @@ import {
   TransactionInstruction,
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
-import { RPC_URL, HOOK_PROGRAM_ID, loadLocalKeypair } from "../src/solana/authorities.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
-// Dynamic import, not a plain top-level one: db/pool.ts reads
-// process.env.DATABASE_URL at module-load time, which a hoisted static
-// import would run before dotenv.config() above (same reasoning as
-// server.ts's own dynamic route imports).
+// Dynamic imports, not plain top-level ones: both db/pool.ts and
+// authorities.ts read process.env at module-load time (DATABASE_URL and
+// SOLANA_RPC_URL respectively), which a hoisted static import would run
+// before dotenv.config() above (same reasoning as server.ts's own dynamic
+// route imports). RPC_URL/HOOK_PROGRAM_ID/loadLocalKeypair were
+// previously imported statically here — a real bug (found running this
+// script fresh against devnet during Phase 10's walkthrough): RPC_URL
+// silently froze to authorities.ts's localhost:8899 fallback instead of
+// ever reading .env's SOLANA_RPC_URL, so this script only ever worked
+// against devnet if SOLANA_RPC_URL happened to already be exported in the
+// invoking shell.
 const { pool } = await import("../src/db/pool.js");
+const { RPC_URL, HOOK_PROGRAM_ID, loadLocalKeypair } = await import("../src/solana/authorities.js");
 
 const SANCTIONS_SOURCE_SYNTHETIC_TEST = 1;
 

@@ -8,8 +8,8 @@ See [`intent/intent-001.md`](intent/intent-001.md), [`spec/spec-001.md`](spec/sp
 
 This project deliberately runs against two independent networks, never mixed:
 
-- **Local validator** (`solana-test-validator`) — fast, free, disposable. This is the active development environment: everything not yet promoted to devnet (currently the redemption-gateway program — still only the Phase 0.5 spike, not the real Phase 8 build) is built and tested here.
-- **Public devnet** — a promoted snapshot of the stable, tested pieces once they're ready to be independently observable by anyone, not just this machine: the compliance-hook program, the Token-2022 mint (with its Default Account State / Permanent Delegate / Transfer Hook extensions), and the sanctions registry PDA. Redemption-gateway will be promoted the same way once Phase 8 is actually built.
+- **Local validator** (`solana-test-validator`) — fast, free, disposable. Was the active development environment through Phase 9; **no longer actively maintained as of Phase 10 (2026-09-07)**. Its persisted ledger (`~/test-ledger`, outside this repo) became corrupted (`failed to load bank from snapshot ... account paths mismatching`) and running a local validator had also become genuinely taxing on the machine it ran on. The corrupted ledger was not rebuilt — see Areas of concern in `spec-001.md` for the full note. Everything the redemption-gateway program needed from local has already been exercised and is documented in `plan-001.md`'s Phase 8 done-test; there's no further local-only work outstanding.
+- **Public devnet** — now the **primary and only actively used environment**. A promoted snapshot of the stable, tested pieces: the compliance-hook program, the Token-2022 mint (with its Default Account State / Permanent Delegate / Transfer Hook extensions), and the sanctions registry PDA. The redemption-gateway program is also promoted here (Phase 8 completed before local was retired).
 
 `SOLANA_RPC_URL`, `DATABASE_URL`, and the `backend/keys/<network>/` directory they imply always move together as one group — see [`.env.example`](.env.example) for the exact local/devnet variable pairs. There is no separate "which network" flag; check those two values together to know which environment is currently active.
 
@@ -19,14 +19,16 @@ This project deliberately runs against two independent networks, never mixed:
 - Sanctions registry: contains **only the `SyntheticTest` entry** (Sanctioned Test Corp). Real OFAC SDN sync is Phase 7, which hasn't been built yet — promoting the registry to devnet didn't and couldn't change that; there is no real sanctions data on either network yet.
 - A representative client set (including Sanctioned Test Corp) onboarded and verified end-to-end: onboarding, funding, a settled transfer, a sanctions-blocked transfer, and the Transaction Evidence view, all confirmed live against devnet and independently visible via public Explorer/Solscan links with no custom RPC configuration.
 
-## Quick start (local validator)
+## Quick start (devnet)
 
-1. `solana-test-validator` running on `localhost:8899`.
-2. `docker compose up -d` (Postgres, and the Phase 6 off-chain indexer — see below).
-3. `cd backend && npm install && npm run db:migrate && npm run setup:mint`.
+Local is no longer maintained (see Networks above) — devnet is the environment to run against.
+
+1. `.env` pointed at the devnet block (see `.env.example`): `SOLANA_RPC_URL=https://api.devnet.solana.com`, `DATABASE_URL=postgresql://deposit_poc:deposit_poc@localhost:5432/deposit_poc_devnet`.
+2. `docker compose up -d` (Postgres, and the Phase 6 off-chain indexer — see below). This starts Postgres only; devnet itself needs no local validator process.
+3. `cd backend && npm install && npm run db:migrate && npm run setup:mint` (idempotent — reuses the existing devnet mint rather than creating a new one).
 4. `cd backend && npm run dev` / `cd frontend && npm install && npm run dev`.
 
-`backend/keys/local/` holds the local bank-ops authority and mint address, generated on first run.
+`backend/keys/devnet/` holds the devnet bank-ops authority and mint address. `npm run reset` (`backend/scripts/reset-demo.ts`) wipes and re-seeds the Postgres side of whichever network is currently active in `.env` for a clean demo state — it never touches on-chain state (mint, programs, sanctions registry). See that script's own header comment for exactly what it does and doesn't do.
 
 ## Off-chain indexer
 

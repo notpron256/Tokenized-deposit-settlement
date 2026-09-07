@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "setup:mint": "tsx scripts/create-mint.ts",
     "db:migrate": "tsx scripts/migrate.ts",
-    "indexer": "tsx scripts/indexer.ts"
+    "indexer": "tsx scripts/indexer.ts",
+    "reset": "tsx scripts/reset-demo.ts"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.15",

@@ -299,8 +299,11 @@ export interface ReconciliationBreak {
 export interface ReconciliationRunResult {
   ranAt: string;
   clientsChecked: number;
-  aggregateExpectedCents: number;
-  aggregateActualCents: number;
+  mintSupplyCents: number;
+  allAccountsTotalCents: number;
+  trackedCents: number;
+  untrackedHoldersCount: number;
+  untrackedHoldersCents: number;
   breaks: ReconciliationBreak[];
   allClear: boolean;
 }
