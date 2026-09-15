@@ -2,7 +2,7 @@
 
 A proof-of-concept tokenized deposit settlement system on Solana: a mocked core banking ledger (Postgres) stays the sole legal source of truth for the deposit liability, while a Token-2022 mint provides a synchronized, on-chain-verifiable representation of it, with compliance (KYC gating, Travel Rule, sanctions screening, velocity limits) enforced by a real deployed Transfer Hook program rather than only in backend logic.
 
-See [`intent/intent-001.md`](intent/intent-001.md), [`spec/spec-001.md`](spec/spec-001.md), and [`plan/plan-001.md`](plan/plan-001.md) for the requirements, design, and phase-by-phase build plan this project follows. See [`VERIFICATION.md`](VERIFICATION.md) for a command-line runbook that independently checks this project's compliance claims without going through the app's own UI or API.
+See [`intent/intent-001.md`](intent/intent-001.md), [`spec/spec-001.md`](spec/spec-001.md), and [`plan/plan-001.md`](plan/plan-001.md) for the requirements, design, and phase-by-phase build plan this project follows — all 10 phases are complete. See [`VERIFICATION.md`](VERIFICATION.md) for a command-line runbook that independently checks this project's compliance claims without going through the app's own UI or API, [`MAINTAIN.md`](MAINTAIN.md) for the production monitoring this system would need if it were actually deployed, and [`LEARNINGS.md`](LEARNINGS.md) for what this build found about Solana/Token-2022 in practice, beyond what documentation and marketing claim.
 
 ## Networks
 
@@ -13,11 +13,12 @@ This project deliberately runs against two independent networks, never mixed:
 
 `SOLANA_RPC_URL`, `DATABASE_URL`, and the `backend/keys/<network>/` directory they imply always move together as one group — see [`.env.example`](.env.example) for the exact local/devnet variable pairs. There is no separate "which network" flag; check those two values together to know which environment is currently active.
 
-**Current devnet state, as of the last promotion:**
+**Current devnet state, as of Phase 10 (2026-09-07):**
 - compliance-hook: deployed at the same program ID as local (`9AxMnpb5g8c8DSnDHNYEeafiTrSzWZbthoDEQpTKiD5z`), reusing the same tracked deploy keypair.
+- redemption-gateway: also deployed on devnet (`A4JWxQpSW19yZ27bFR9Gfxz14SxVDhExQoXvixt3zVzN`), promoted once Phase 8 was actually built — no longer local-only.
 - Mint: created fresh on devnet with all three extensions, independently confirmed via `spl-token display` and via the standard (non-custom-RPC) Solana Explorer and Solscan.
-- Sanctions registry: contains **only the `SyntheticTest` entry** (Sanctioned Test Corp). Real OFAC SDN sync is Phase 7, which hasn't been built yet — promoting the registry to devnet didn't and couldn't change that; there is no real sanctions data on either network yet.
-- A representative client set (including Sanctioned Test Corp) onboarded and verified end-to-end: onboarding, funding, a settled transfer, a sanctions-blocked transfer, and the Transaction Evidence view, all confirmed live against devnet and independently visible via public Explorer/Solscan links with no custom RPC configuration.
+- Sanctions registry: **real OFAC SDN sync has been built and run against devnet** (Phase 7) — the registry currently holds 4 real, Solana-tagged OFAC SDN entries plus the 1 `SyntheticTest` entry (Sanctioned Test Corp), 5 total. Real Solana-tagged designations are genuinely rare (4 out of 19,329 total SDN entries as of the 09/04/2026 publication — see `spec-001.md`'s Areas of concern), not an artifact of an incomplete sync.
+- A clean demo client set — Devnet Alpha Holdings, Devnet Beta Treasury, Sanctioned Test Corp, Gringotts Bank — onboarded via `backend/scripts/reset-demo.ts` (Phase 10) and verified end-to-end, live through the browser: funding, an ordinary transfer, a sanctions-blocked transfer, a missing-memo Travel Rule rejection, a velocity-limit rejection, a redemption, a sanctioned-client redemption refusal, a Permanent Delegate clawback, and a clean reconciliation run (both the aggregate and per-client checks) — all independently visible via public Explorer/Solscan links with no custom RPC configuration.
 
 ## Quick start (devnet)
 
